@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Tv, Film, Flame, BookmarkCheck, SlidersHorizontal } from 'lucide-react';
+import { Home, LayoutGrid, Flame, BookmarkCheck, SlidersHorizontal } from 'lucide-react';
 
 interface FloatingBottomNavProps {
   activeTab: string;
@@ -16,8 +16,7 @@ export default function FloatingBottomNav({
 }: FloatingBottomNavProps) {
   const navItems = [
     { id: 'home', label: 'Home', icon: Home },
-    { id: 'tv', label: 'TV Shows', icon: Tv },
-    { id: 'movies', label: 'Movies', icon: Film },
+    { id: 'browse', label: 'Browse', icon: LayoutGrid },
     { id: 'popular', label: 'New & Hot', icon: Flame },
     { id: 'mylist', label: 'My List', icon: BookmarkCheck, badge: myListCount },
   ];

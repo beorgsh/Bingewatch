@@ -55,6 +55,63 @@ export async function getTrending(): Promise<TMDBMedia[]> {
   return (data.results || []).filter((item: any) => item.media_type === 'movie' || item.media_type === 'tv' || !item.media_type);
 }
 
+export async function getRandomMovies(): Promise<TMDBMedia[]> {
+  try {
+    const randomPage1 = Math.floor(Math.random() * 20) + 1;
+    const randomPage2 = Math.floor(Math.random() * 20) + 1;
+    const randomPage3 = Math.floor(Math.random() * 15) + 1;
+
+    const [movies1, movies2, series1] = await Promise.all([
+      getDiscover('movie', undefined, randomPage1),
+      getDiscover('movie', undefined, randomPage2),
+      getDiscover('tv', undefined, randomPage3),
+    ]);
+
+    const combined = [...movies1, ...movies2, ...series1];
+    const uniqueMap = new Map<number, TMDBMedia>();
+    combined.forEach((item) => {
+      if (item && item.id && (item.backdrop_path || item.poster_path)) {
+        uniqueMap.set(item.id, item);
+      }
+    });
+
+    const items = Array.from(uniqueMap.values());
+    // Shuffle randomly
+    for (let i = items.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [items[i], items[j]] = [items[j], items[i]];
+    }
+
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+export const GENRE_LIST = [
+  { id: 0, name: 'All Genres' },
+  { id: 28, name: 'Action' },
+  { id: 12, name: 'Adventure' },
+  { id: 16, name: 'Animation' },
+  { id: 35, name: 'Comedy' },
+  { id: 80, name: 'Crime' },
+  { id: 99, name: 'Documentary' },
+  { id: 18, name: 'Drama' },
+  { id: 10751, name: 'Family' },
+  { id: 14, name: 'Fantasy' },
+  { id: 27, name: 'Horror' },
+  { id: 9648, name: 'Mystery' },
+  { id: 10749, name: 'Romance' },
+  { id: 878, name: 'Sci-Fi' },
+  { id: 53, name: 'Thriller' },
+];
+
+export async function getUpcomingMovies(page = 1): Promise<TMDBMedia[]> {
+  const data = await fetchSafeJson<{ results?: any[] }>(`/api/tmdb/discover?type=movie&sort_by=primary_release_date.desc&page=${page}`, { results: [] });
+  return (data.results || []).map((item: any) => ({ ...item, media_type: 'movie' }));
+}
+
+
 export async function getPopularMovies(page = 1): Promise<TMDBMedia[]> {
   const data = await fetchSafeJson<{ results?: any[] }>(`/api/tmdb/popular/movies?page=${page}`, { results: [] });
   return (data.results || []).map((item: any) => ({ ...item, media_type: 'movie' }));

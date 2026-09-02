@@ -14,6 +14,9 @@ import {
   ThumbsUp,
   Share2,
   ArrowLeft,
+  Film,
+  Shuffle,
+  Trophy,
 } from 'lucide-react';
 import { TMDBMedia, VideoResult } from '../types';
 import {
@@ -22,6 +25,7 @@ import {
   getPopularSeries,
   getTopRated,
   getMediaVideos,
+  getRandomMovies,
   getBackdropUrl,
   getPosterUrl,
 } from '../api/tmdb';
@@ -34,7 +38,7 @@ interface NewAndHotReelsProps {
   onBack?: () => void;
 }
 
-type ReelCategory = 'watching' | 'coming_soon' | 'top10';
+type ReelCategory = 'hot' | 'coming' | 'top' | 'reels';
 
 export default function NewAndHotReels({
   onPlay,
@@ -43,26 +47,44 @@ export default function NewAndHotReels({
   onToggleMyList,
   onBack,
 }: NewAndHotReelsProps) {
-  const [activeCategory, setActiveCategory] = useState<ReelCategory>('watching');
+  const [activeCategory, setActiveCategory] = useState<ReelCategory>('hot');
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [isMuted, setIsMuted] = useState(true);
+  const [muteToastVisible, setMuteToastVisible] = useState(false);
+  const muteToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const [trailersMap, setTrailersMap] = useState<Record<number, string>>({});
   const [likedMap, setLikedMap] = useState<Record<number, boolean>>({});
   const [expandedOverviewIndex, setExpandedOverviewIndex] = useState<number | null>(null);
   const [copiedToast, setCopiedToast] = useState(false);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const categoryScrollRef = useRef<HTMLDivElement | null>(null);
   const isScrollingRef = useRef(false);
 
   // Touch gesture swipe tracking for closing reel and returning home
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
 
+  // Trigger mute toggle with visual icon feedback
+  const triggerMuteToggle = useCallback(() => {
+    setIsMuted((prev) => {
+      const nextState = !prev;
+      setMuteToastVisible(true);
+      if (muteToastTimeoutRef.current) {
+        clearTimeout(muteToastTimeoutRef.current);
+      }
+      muteToastTimeoutRef.current = setTimeout(() => {
+        setMuteToastVisible(false);
+      }, 900);
+      return nextState;
+    });
+  }, []);
+
   // 1. History popstate interceptor: Intercept device back button / back swipe
   useEffect(() => {
-    // Push a dummy state so clicking hardware back / swipe back triggers popstate instead of leaving site
     window.history.pushState({ reelOpen: true }, '');
 
     const handlePopState = () => {
@@ -90,9 +112,9 @@ export default function NewAndHotReels({
     async function loadCategoryItems() {
       try {
         let results: TMDBMedia[] = [];
-        if (activeCategory === 'watching') {
+        if (activeCategory === 'hot') {
           results = await getTrending();
-        } else if (activeCategory === 'coming_soon') {
+        } else if (activeCategory === 'coming') {
           const [movies, tv] = await Promise.all([getPopularMovies(1), getPopularSeries(1)]);
           const combined: TMDBMedia[] = [];
           const maxLen = Math.max(movies.length, tv.length);
@@ -101,9 +123,11 @@ export default function NewAndHotReels({
             if (tv[i]) combined.push(tv[i]);
           }
           results = combined;
-        } else if (activeCategory === 'top10') {
+        } else if (activeCategory === 'top') {
           const top = await getTopRated('movie', 1);
           results = top.slice(0, 10);
+        } else if (activeCategory === 'reels') {
+          results = await getRandomMovies();
         }
 
         if (isMounted) {
@@ -238,15 +262,15 @@ export default function NewAndHotReels({
       } else if (e.key === 'Escape' || e.key === 'ArrowLeft') {
         if (onBack) onBack();
       } else if (e.key === 'm' || e.key === 'M') {
-        setIsMuted((prev) => !prev);
+        triggerMuteToggle();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleNext, handlePrev, onBack]);
+  }, [handleNext, handlePrev, onBack, triggerMuteToggle]);
 
-  // 8. Horizontal Swipe gesture handlers to close Reels screen (Swipe Right to dismiss)
+  // 8. Horizontal Swipe gesture handlers to close Reels screen (Swipe Right to dismiss) + Tap to Mute
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       touchStartRef.current = {
@@ -277,12 +301,23 @@ export default function NewAndHotReels({
     const deltaY = touchEnd.clientY - touchStartRef.current.y;
     const deltaTime = Date.now() - touchStartRef.current.time;
 
+    // Detect if this was a stationary tap on screen (< 10px movement and < 300ms)
+    const isStationaryTap = Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12 && deltaTime < 300;
+
     // Trigger close if swiped right more than 80px or quick flick to the right
     const isQuickSwipeRight = deltaX > 60 && deltaTime < 300 && Math.abs(deltaX) > Math.abs(deltaY);
     const isLongSwipeRight = deltaX > 110;
 
     if ((isQuickSwipeRight || isLongSwipeRight) && onBack) {
       onBack();
+    } else if (isStationaryTap) {
+      // Check if tap was on background or general surface (not an interactive button)
+      const target = e.target as HTMLElement;
+      const isInteractive = target.closest('button') || target.closest('a') || target.closest('input');
+      if (!isInteractive) {
+        triggerMuteToggle();
+      }
+      setSwipeOffsetX(0);
     } else {
       setSwipeOffsetX(0);
     }
@@ -355,63 +390,116 @@ export default function NewAndHotReels({
             </button>
           )}
 
-          {/* Category Switcher Pills */}
-          <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-0.5">
+          {/* Slidable Category Switcher Bar */}
+          <div
+            ref={categoryScrollRef}
+            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 px-1 max-w-[68vw] sm:max-w-md snap-x touch-pan-x"
+          >
             <button
-              onClick={() => setActiveCategory('watching')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeCategory === 'watching'
+              onClick={() => setActiveCategory('hot')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                activeCategory === 'hot'
                   ? 'bg-white text-black font-bold shadow-lg scale-105'
                   : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
               }`}
             >
               <Flame className="w-3.5 h-3.5 text-red-500" />
-              <span>Everyone's Watching</span>
+              <span>Hot</span>
             </button>
 
             <button
-              onClick={() => setActiveCategory('coming_soon')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeCategory === 'coming_soon'
+              onClick={() => setActiveCategory('coming')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                activeCategory === 'coming'
                   ? 'bg-white text-black font-bold shadow-lg scale-105'
                   : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
               }`}
             >
               <Calendar className="w-3.5 h-3.5 text-sky-400" />
-              <span>Coming Soon</span>
+              <span>Coming</span>
             </button>
 
             <button
-              onClick={() => setActiveCategory('top10')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
-                activeCategory === 'top10'
+              onClick={() => setActiveCategory('top')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                activeCategory === 'top'
                   ? 'bg-white text-black font-bold shadow-lg scale-105'
                   : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
               }`}
             >
               <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Top 10</span>
+              <span>Top</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (activeCategory === 'reels') {
+                  // If already in reels, refresh with a new random batch
+                  setIsLoading(true);
+                  getRandomMovies().then((results) => {
+                    setItems(results.filter((item) => item.backdrop_path || item.poster_path));
+                    setActiveIndex(0);
+                    if (containerRef.current) containerRef.current.scrollTop = 0;
+                    setIsLoading(false);
+                  });
+                } else {
+                  setActiveCategory('reels');
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                activeCategory === 'reels'
+                  ? 'bg-white text-black font-bold shadow-lg scale-105'
+                  : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
+              }`}
+              title="Random movies across TMDB"
+            >
+              <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Reels</span>
             </button>
           </div>
         </div>
 
-        {/* Mute/Unmute Quick Toggle */}
+        {/* Mute/Unmute Quick Toggle Button in Header */}
         <div className="pointer-events-auto flex items-center gap-2">
           <button
-            onClick={() => setIsMuted(!isMuted)}
-            className="p-2.5 rounded-full bg-black/60 backdrop-blur-md text-white hover:text-white transition-all cursor-pointer shadow-lg"
-            title={isMuted ? 'Unmute video preview (M)' : 'Mute video preview (M)'}
+            onClick={triggerMuteToggle}
+            className="p-2.5 rounded-full bg-black/60 backdrop-blur-md text-white hover:text-white transition-all cursor-pointer shadow-lg active:scale-95"
+            title={isMuted ? 'Unmute video preview (Tap or press M)' : 'Mute video preview (Tap or press M)'}
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-white" /> : <Volume2 className="w-4 h-4 text-white" />}
           </button>
         </div>
       </div>
 
-      {/* 2. Full-Screen Vertical Scroll Snapping Reel Container */}
+      {/* 2. Tap-to-Mute Central Animated Feedback Toast */}
+      {muteToastVisible && (
+        <div className="fixed inset-0 z-40 pointer-events-none flex items-center justify-center">
+          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-2xl bg-black/75 backdrop-blur-md border border-neutral-700 text-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            {isMuted ? (
+              <VolumeX className="w-10 h-10 text-white" />
+            ) : (
+              <Volume2 className="w-10 h-10 text-white" />
+            )}
+            <span className="text-xs font-bold tracking-wider uppercase text-neutral-200">
+              {isMuted ? 'Muted' : 'Sound On'}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* 3. Full-Screen Vertical Scroll Snapping Reel Container */}
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="w-full max-w-lg md:max-w-xl lg:max-w-2xl h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-none relative bg-black"
+        onClick={(e) => {
+          // On desktop clicks on the main backdrop area
+          const target = e.target as HTMLElement;
+          const isInteractive = target.closest('button') || target.closest('a') || target.closest('input');
+          if (!isInteractive) {
+            triggerMuteToggle();
+          }
+        }}
+        className="w-full max-w-lg md:max-w-xl lg:max-w-2xl h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-none relative bg-black cursor-pointer"
         style={{ scrollBehavior: 'smooth' }}
       >
         {items.map((item, index) => {
@@ -469,7 +557,10 @@ export default function NewAndHotReels({
               <div className="absolute right-3 sm:right-5 bottom-8 sm:bottom-12 z-30 flex flex-col items-center gap-5 pointer-events-auto">
                 {/* 1. LOL / Thumbs Up Reaction */}
                 <button
-                  onClick={() => toggleLike(item.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleLike(item.id);
+                  }}
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="Like Title"
                 >
@@ -483,7 +574,10 @@ export default function NewAndHotReels({
 
                 {/* 2. Add to My List */}
                 <button
-                  onClick={() => onToggleMyList(item)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleMyList(item);
+                  }}
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title={isSaved ? 'In My List' : 'Add to My List'}
                 >
@@ -501,7 +595,10 @@ export default function NewAndHotReels({
 
                 {/* 3. Share URL */}
                 <button
-                  onClick={() => handleShare(item)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleShare(item);
+                  }}
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="Share Title"
                 >
@@ -513,7 +610,10 @@ export default function NewAndHotReels({
 
                 {/* 4. More Details Modal */}
                 <button
-                  onClick={() => onOpenDetails(item)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenDetails(item);
+                  }}
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="More Details"
                 >
@@ -525,7 +625,10 @@ export default function NewAndHotReels({
 
                 {/* 5. Direct Play Action */}
                 <button
-                  onClick={() => onPlay(item)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onPlay(item);
+                  }}
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="Watch Full Stream"
                 >
@@ -573,9 +676,10 @@ export default function NewAndHotReels({
                   </p>
                   {item.overview && item.overview.length > 90 && (
                     <button
-                      onClick={() =>
-                        setExpandedOverviewIndex(isOverviewExpanded ? null : index)
-                      }
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedOverviewIndex(isOverviewExpanded ? null : index);
+                      }}
                       className="text-neutral-400 hover:text-white text-xs font-semibold mt-1 cursor-pointer underline underline-offset-2"
                     >
                       {isOverviewExpanded ? 'Show less' : 'More info'}
@@ -586,7 +690,10 @@ export default function NewAndHotReels({
                 {/* Direct Watch Stream Call to Action */}
                 <div className="pt-2 flex items-center gap-2.5">
                   <button
-                    onClick={() => onPlay(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onPlay(item);
+                    }}
                     className="flex items-center gap-2 px-5 py-2 bg-white text-black font-bold text-xs sm:text-sm rounded-full hover:bg-neutral-200 active:scale-95 transition-all cursor-pointer shadow-xl"
                   >
                     <Play className="w-4 h-4 text-black fill-current" />
@@ -594,7 +701,10 @@ export default function NewAndHotReels({
                   </button>
 
                   <button
-                    onClick={() => onOpenDetails(item)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenDetails(item);
+                    }}
                     className="flex items-center gap-1.5 px-4 py-2 bg-neutral-900/80 text-white font-semibold text-xs sm:text-sm rounded-full hover:bg-neutral-800 active:scale-95 transition-all cursor-pointer backdrop-blur-md"
                   >
                     <Info className="w-4 h-4 text-white" />
@@ -607,10 +717,13 @@ export default function NewAndHotReels({
         })}
       </div>
 
-      {/* 3. Desktop Floating Next / Prev Chevrons */}
+      {/* 4. Desktop Floating Next / Prev Chevrons */}
       <div className="hidden lg:flex fixed right-6 top-1/2 -translate-y-1/2 z-40 flex-col items-center gap-3">
         <button
-          onClick={handlePrev}
+          onClick={(e) => {
+            e.stopPropagation();
+            handlePrev();
+          }}
           disabled={activeIndex === 0}
           className={`p-3 rounded-full bg-black/70 backdrop-blur-md text-white transition-all cursor-pointer shadow-2xl ${
             activeIndex === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110 hover:bg-neutral-900'
@@ -625,7 +738,10 @@ export default function NewAndHotReels({
         </span>
 
         <button
-          onClick={handleNext}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleNext();
+          }}
           disabled={activeIndex === items.length - 1}
           className={`p-3 rounded-full bg-black/70 backdrop-blur-md text-white transition-all cursor-pointer shadow-2xl ${
             activeIndex === items.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110 hover:bg-neutral-900'
@@ -636,7 +752,7 @@ export default function NewAndHotReels({
         </button>
       </div>
 
-      {/* 4. Link Copied Toast Notification */}
+      {/* 5. Link Copied Toast Notification */}
       {copiedToast && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-neutral-900 text-white text-xs font-semibold rounded-full shadow-2xl flex items-center gap-2 border border-neutral-700">
           <Check className="w-4 h-4 text-white" />

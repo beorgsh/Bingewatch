@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Bell, X, Film, Tv, Flame, BookmarkCheck, SlidersHorizontal } from 'lucide-react';
+import { Search, Bell, X, Flame, BookmarkCheck, SlidersHorizontal } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface NavbarProps {
   activeTab: string;
@@ -45,8 +46,7 @@ export default function Navbar({
 
   const navItems = [
     { id: 'home', label: 'Home' },
-    { id: 'tv', label: 'TV Shows' },
-    { id: 'movies', label: 'Movies' },
+    { id: 'browse', label: 'Browse' },
     { id: 'popular', label: 'New & Hot' },
     { id: 'mylist', label: `My List ${myListCount > 0 ? `(${myListCount})` : ''}` },
   ];
@@ -101,8 +101,8 @@ export default function Navbar({
           </nav>
         </div>
 
-        {/* Right: Search, Custom HLS Stream, Notifications, Profile */}
-        <div className="flex items-center gap-3 sm:gap-4">
+        {/* Right: Search, PWA Install, Custom HLS Stream, Notifications, Profile */}
+        <div className="flex items-center gap-2.5 sm:gap-3.5">
           {/* Live Search Input */}
           <div className="relative flex items-center">
             {isSearchOpen ? (
@@ -142,6 +142,9 @@ export default function Navbar({
               </button>
             )}
           </div>
+
+          {/* In-App PWA Install Button */}
+          <PWAInstallButton />
 
           {/* Custom M3U8 Tester Button (Desktop) */}
           <button

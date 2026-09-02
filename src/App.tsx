@@ -22,12 +22,17 @@ import CustomStreamModal from './components/CustomStreamModal';
 import PlatformsRow from './components/PlatformsRow';
 import PlatformModal from './components/PlatformModal';
 import NewAndHotReels from './components/NewAndHotReels';
+import BrowseView from './components/BrowseView';
+import { OfflineBanner } from './components/PWAInstallButton';
+import { useOnlineStatus } from './hooks/usePWAInstall';
 
 import ContinueWatchingRow, { ContinueWatchingItem } from './components/ContinueWatchingRow';
 
 export default function App() {
+  const isOnline = useOnlineStatus();
+
   // Navigation & View State
-  const [activeTab, setActiveTab] = useState<'home' | 'tv' | 'movies' | 'popular' | 'mylist'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'browse' | 'popular' | 'mylist'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedGenre, setSelectedGenre] = useState<number | null>(null);
@@ -143,69 +148,6 @@ export default function App() {
             { id: 'action', title: 'High-Octane Action & Thrillers', items: actionMovies },
             { id: 'scifi', title: 'Sci-Fi & Cyberpunk Sagas', items: scifiSeries },
             { id: 'topRated', title: 'Award Winners & Masterpieces', items: topRated },
-          ]);
-        } else if (activeTab === 'tv') {
-          const [popSeries, topRatedTv, dramaTv, animationTv, comedyTv] = await Promise.all([
-            getPopularSeries(1),
-            getTopRated('tv', 1),
-            getDiscover('tv', 18, 1), // Drama
-            getDiscover('tv', 16, 1), // Animation
-            getDiscover('tv', 35, 1), // Comedy
-          ]);
-
-          if (!isMounted) return;
-
-          if (popSeries && popSeries.length > 0) {
-            setHeroMedia(popSeries[0]);
-          }
-
-          setRows([
-            { id: 'popTv', title: 'Popular TV Shows', items: popSeries },
-            { id: 'topTv', title: 'Top Rated TV Dramas', items: topRatedTv },
-            { id: 'dramaTv', title: 'Gripping TV Dramas', items: dramaTv },
-            { id: 'animTv', title: 'Anime & Animated Series', items: animationTv },
-            { id: 'comedyTv', title: 'Binge-Worthy Comedies', items: comedyTv },
-          ]);
-        } else if (activeTab === 'movies') {
-          const [popMovies, topRatedMovies, scifiMovies, horrorMovies, thrillerMovies] =
-            await Promise.all([
-              getPopularMovies(1),
-              getTopRated('movie', 1),
-              getDiscover('movie', 878, 1), // Sci-Fi
-              getDiscover('movie', 27, 1),  // Horror
-              getDiscover('movie', 53, 1),  // Thriller
-            ]);
-
-          if (!isMounted) return;
-
-          if (popMovies && popMovies.length > 0) {
-            setHeroMedia(popMovies[0]);
-          }
-
-          setRows([
-            { id: 'popMov', title: 'Trending Movies', items: popMovies },
-            { id: 'topMov', title: 'Critically Acclaimed Cinema', items: topRatedMovies },
-            { id: 'scifiMov', title: 'Mind-Bending Sci-Fi', items: scifiMovies },
-            { id: 'thrillerMov', title: 'Psychological Thrillers', items: thrillerMovies },
-            { id: 'horrorMov', title: 'Late Night Suspense & Horror', items: horrorMovies },
-          ]);
-        } else if (activeTab === 'popular') {
-          const [trending, popMovies, popSeries] = await Promise.all([
-            getTrending(),
-            getPopularMovies(1),
-            getPopularSeries(1),
-          ]);
-
-          if (!isMounted) return;
-
-          if (trending && trending.length > 0) {
-            setHeroMedia(trending[0]);
-          }
-
-          setRows([
-            { id: 'top10Pop', title: 'Top 10 Global Sensation', items: trending.slice(0, 10), isTop10: true },
-            { id: 'newMov', title: 'New On Bingewatch: Movies', items: popMovies },
-            { id: 'newTv', title: 'New On Bingewatch: Series', items: popSeries },
           ]);
         }
       } catch (err) {
@@ -335,6 +277,14 @@ export default function App() {
             onToggleMyList={toggleMyList}
             defaultTop10={rows[0]?.items || []}
           />
+        ) : activeTab === 'browse' ? (
+          /* Browse All Titles with Filters and Infinite Discovery */
+          <BrowseView
+            onPlay={handlePlayMedia}
+            onOpenDetails={handleOpenDetails}
+            isInMyList={isInMyList}
+            onToggleMyList={toggleMyList}
+          />
         ) : activeTab === 'mylist' ? (
           /* My List View */
           <MyListView
@@ -353,7 +303,7 @@ export default function App() {
             onBack={() => setActiveTab('home')}
           />
         ) : (
-          /* Standard Catalog Views (Home, TV Shows, Movies) */
+          /* Standard Home Catalog View */
           <main className="pb-24">
             {/* Billboard Hero Banner */}
             <HeroBanner
@@ -520,6 +470,9 @@ export default function App() {
           myListCount={myList.length}
         />
       )}
+
+      {/* 8. PWA Offline Indicator */}
+      {!isOnline && <OfflineBanner />}
     </div>
   );
 }
