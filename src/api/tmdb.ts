@@ -1,4 +1,4 @@
-import { TMDBMedia, SeasonDetails, MediaStreamData } from '../types';
+import { TMDBMedia, SeasonDetails, MediaStreamData, VideoResult } from '../types';
 
 export interface StreamServerOption {
   id: string;
@@ -121,6 +121,13 @@ export async function getMediaDetails(type: 'movie' | 'tv', id: number): Promise
     data.media_type = cleanType;
   }
   return data;
+}
+
+export async function getMediaVideos(type: 'movie' | 'tv', id: number): Promise<VideoResult[]> {
+  if (!id) return [];
+  const cleanType = type === 'tv' ? 'tv' : 'movie';
+  const data = await fetchSafeJson<{ results?: VideoResult[] }>(`/api/tmdb/videos/${cleanType}/${id}`, { results: [] });
+  return data.results || [];
 }
 
 export async function getSeasonDetails(tvId: number, seasonNumber: number): Promise<SeasonDetails> {

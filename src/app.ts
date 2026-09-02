@@ -582,6 +582,22 @@ apiRouter.get("/tmdb/genres", async (req: Request, res: Response) => {
   }
 });
 
+apiRouter.get("/tmdb/videos/:type/:id", async (req: Request, res: Response) => {
+  const { type, id } = req.params;
+  if (!id || id === "undefined" || id === "null" || isNaN(Number(id))) {
+    res.status(400).json({ error: "Invalid ID", results: [] });
+    return;
+  }
+  const cleanType = type === "tv" ? "tv" : "movie";
+  try {
+    const data = await fetchTmdb(`/${cleanType}/${id}/videos`);
+    res.setHeader("Cache-Control", "public, max-age=3600, s-maxage=86400, stale-while-revalidate=86400");
+    res.json(data);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, results: [] });
+  }
+});
+
 apiRouter.get("/tmdb/details/:type/:id", async (req: Request, res: Response) => {
   const { type, id } = req.params;
   if (!id || id === "undefined" || id === "null" || isNaN(Number(id))) {

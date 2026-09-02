@@ -6,8 +6,6 @@ import {
   Pause,
   RotateCcw,
   RotateCw,
-  Maximize,
-  Minimize,
   ArrowLeft,
   SkipForward,
   SkipBack,
@@ -165,6 +163,9 @@ export default function NetflixPlayer({
 
   // 1. Fetch metadata and stream sources from the requested endpoints
   const loadStreamData = useCallback(async (seasonNum: number, episodeNum: number, serverName = selectedServer) => {
+    if (videoRef.current && videoRef.current.currentTime > 0) {
+      preservedTimeRef.current = videoRef.current.currentTime;
+    }
     setIsLoadingStream(true);
     setStreamError(null);
     setShowNextPrompt(false);
@@ -437,7 +438,7 @@ export default function NetflixPlayer({
     }
   };
 
-  // Fullscreen change listener to keep state in sync
+  // Fullscreen change listener and auto-enter fullscreen on player launch
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(Boolean(document.fullscreenElement));
@@ -445,11 +446,40 @@ export default function NetflixPlayer({
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+    // Auto-enter fullscreen mode immediately when player mounts
+    const enterFullscreen = () => {
+      if (containerRef.current && !document.fullscreenElement) {
+        containerRef.current.requestFullscreen?.().catch(() => {});
+      }
+    };
+
+    enterFullscreen();
+
+    // Trigger on first click/touch anywhere in player if browser required user gesture
+    const handleFirstActivation = () => {
+      enterFullscreen();
+      window.removeEventListener('click', handleFirstActivation);
+      window.removeEventListener('touchstart', handleFirstActivation);
+    };
+
+    window.addEventListener('click', handleFirstActivation, { once: true });
+    window.addEventListener('touchstart', handleFirstActivation, { once: true });
+
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
+      window.removeEventListener('click', handleFirstActivation);
+      window.removeEventListener('touchstart', handleFirstActivation);
     };
   }, []);
+
+  const handleClosePlayer = () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    onClose();
+  };
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
@@ -797,21 +827,15 @@ export default function NetflixPlayer({
           const dur = videoRef.current.duration || 0;
           setCurrentTime(ct);
           setDuration(dur);
+          if (ct > 0) {
+            preservedTimeRef.current = ct;
+          }
 
           if (videoRef.current.videoHeight > 0) {
             const vh = `${videoRef.current.videoHeight}p`;
             if (vh !== detectedQuality) {
               setDetectedQuality(vh);
             }
-          }
-
-          if (preservedTimeRef.current > 0) {
-            applyInitialSeek();
-            if (ct > 0 && Math.abs(ct - preservedTimeRef.current) < 3) {
-              preservedTimeRef.current = 0;
-            }
-          } else if (!hasSeekedToInitialRef.current) {
-            applyInitialSeek();
           }
 
           // Report progress every second
@@ -1071,7 +1095,7 @@ export default function NetflixPlayer({
             >
               <div className="flex items-center gap-4">
                 <button
-                  onClick={onClose}
+                  onClick={handleClosePlayer}
                   className="p-2 text-white hover:text-neutral-300 transition-colors cursor-pointer"
                   title="Back to Browse"
                 >
@@ -1583,19 +1607,6 @@ export default function NetflixPlayer({
                       </div>
                     )}
                   </div>
-
-                  {/* Fullscreen Toggle */}
-                  <button
-                    onClick={toggleFullscreen}
-                    className="text-white hover:text-neutral-300 transition-colors cursor-pointer p-1"
-                    title={isFullscreen ? 'Exit Fullscreen (F)' : 'Fullscreen (F)'}
-                  >
-                    {isFullscreen ? (
-                      <Minimize className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                    ) : (
-                      <Maximize className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
-                    )}
-                  </button>
                 </div>
               </div>
             </motion.div>
