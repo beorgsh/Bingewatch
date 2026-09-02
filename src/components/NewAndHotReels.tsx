@@ -664,7 +664,7 @@ export default function NewAndHotReels({
                     }`}
                   >
                     <iframe
-                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${isMuted ? 1 : 0}&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&cc_load_policy=0&hl=en&cc_lang_pref=off&enablejsapi=1&origin=${encodeURIComponent(
+                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=0&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&cc_load_policy=0&hl=en&cc_lang_pref=off&enablejsapi=1&origin=${encodeURIComponent(
                         typeof window !== 'undefined' ? window.location.origin : ''
                       )}`}
                       title={`${title} Trailer`}
@@ -678,6 +678,8 @@ export default function NewAndHotReels({
                         if (!isMutedRef.current) {
                           sendIframeCommand('unMute');
                           sendIframeCommand('setVolume', [100]);
+                        } else {
+                          sendIframeCommand('mute');
                         }
                         // Secondary checks to ensure YouTube captions module remains deactivated
                         setTimeout(() => {

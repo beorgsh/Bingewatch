@@ -175,12 +175,18 @@ apiRouter.get("/movie/:tmdb", async (req: Request, res: Response) => {
       file: t.file?.startsWith("/") ? t.file : `/api/sub-vtt?url=${encodeURIComponent(t.id || t.file)}`,
     }));
 
+    const cinejoyEmbedUrl = `https://cinejoy.to/watch/movie/${tmdbId}`;
+    const isEmbedServer = requestedServer === 'cinejoy';
+    const isSuccess = hasStream || isEmbedServer;
+
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=3600, stale-while-revalidate=86400");
     res.json({
-      success: hasStream,
-      error: hasStream ? null : (upstreamStream?.error || `No streaming sources found for "${title}" on server ${requestedServer}.`),
+      success: isSuccess,
+      error: isSuccess ? null : (upstreamStream?.error || `No streaming sources found for "${title}" on server ${requestedServer}.`),
       isFallback: false,
-      server: upstreamStream?.server || requestedServer,
+      server: requestedServer,
+      serverType: isEmbedServer ? 'embed' : 'hls',
+      embedUrl: cinejoyEmbedUrl,
       m3u8: hasStream ? (upstreamStream?.m3u8 || sources[0]?.url) : null,
       rawM3u8: upstreamStream?.rawM3u8 || null,
       proxiedM3u8: upstreamStream?.proxiedM3u8 || upstreamStream?.m3u8 || null,
@@ -290,12 +296,18 @@ apiRouter.get("/series/:tmdb/:season/:episode", async (req: Request, res: Respon
       file: t.file?.startsWith("/") ? t.file : `/api/sub-vtt?url=${encodeURIComponent(t.id || t.file)}`,
     }));
 
+    const cinejoyEmbedUrl = `https://cinejoy.to/watch/tv/${tmdbId}/${season}/${episode}`;
+    const isEmbedServer = requestedServer === 'cinejoy';
+    const isSuccess = hasStream || isEmbedServer;
+
     res.setHeader("Cache-Control", "public, max-age=600, s-maxage=3600, stale-while-revalidate=86400");
     res.json({
-      success: hasStream,
-      error: hasStream ? null : (upstreamStream?.error || `No streaming sources found for ${title} S${season}E${episode} on server ${requestedServer}.`),
+      success: isSuccess,
+      error: isSuccess ? null : (upstreamStream?.error || `No streaming sources found for ${title} S${season}E${episode} on server ${requestedServer}.`),
       isFallback: false,
-      server: upstreamStream?.server || requestedServer,
+      server: requestedServer,
+      serverType: isEmbedServer ? 'embed' : 'hls',
+      embedUrl: cinejoyEmbedUrl,
       m3u8: hasStream ? (upstreamStream?.m3u8 || sources[0]?.url) : null,
       rawM3u8: upstreamStream?.rawM3u8 || null,
       proxiedM3u8: upstreamStream?.proxiedM3u8 || upstreamStream?.m3u8 || null,

@@ -22,6 +22,8 @@ import {
   X,
   Maximize,
   Minimize,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { TMDBMedia, MediaStreamData, SeasonDetails, Episode } from '../types';
 import { getMovieStream, getSeriesStream, getSeasonDetails, STREAM_SERVERS } from '../api/tmdb';
@@ -115,7 +117,8 @@ export default function NetflixPlayer({
 
   // Custom Stream URL & Server Selection
   const [customStreamInput, setCustomStreamInput] = useState('');
-  const [selectedServer, setSelectedServer] = useState<string>('lisbon');
+  const [selectedServer, setSelectedServer] = useState<string>('cinejoy');
+  const [showEmbedControls, setShowEmbedControls] = useState<boolean>(true);
   const preservedTimeRef = useRef<number>(0);
 
   // Helper to seek to initial timestamp or preserved timestamp across server switches
@@ -173,10 +176,37 @@ export default function NetflixPlayer({
     setShowNextPrompt(false);
 
     try {
+      if (serverName === 'cinejoy') {
+        const embedUrl =
+          media.media_type === 'tv'
+            ? `https://cinejoy.to/watch/tv/${media.id}/${seasonNum}/${episodeNum}`
+            : `https://cinejoy.to/watch/movie/${media.id}`;
+        setStreamData({
+          success: true,
+          tmdbId: media.id,
+          mediaType: media.media_type === 'tv' ? 'tv' : 'movie',
+          title: media.title || media.name || '',
+          overview: media.overview || '',
+          posterPath: media.poster_path,
+          backdropPath: media.backdrop_path,
+          server: 'cinejoy',
+          serverType: 'embed',
+          embedUrl,
+          sources: [],
+          tracks: [],
+        });
+        if (media.media_type === 'tv') {
+          const sDetails = await getSeasonDetails(media.id, seasonNum);
+          setSeasonDetails(sDetails);
+        }
+        setIsLoadingStream(false);
+        return;
+      }
+
       if (media.media_type === 'tv') {
         const data = await getSeriesStream(media.id, seasonNum, episodeNum, serverName);
         setStreamData(data);
-        if (!data.m3u8 && (!data.sources || data.sources.length === 0)) {
+        if (data.serverType !== 'embed' && !data.m3u8 && (!data.sources || data.sources.length === 0)) {
           setStreamError(data.error || `No stream available for Season ${seasonNum}, Episode ${episodeNum} on server "${serverName}".`);
         }
         // Also fetch season details for in-player episodes list
@@ -185,7 +215,7 @@ export default function NetflixPlayer({
       } else {
         const data = await getMovieStream(media.id, serverName);
         setStreamData(data);
-        if (!data.m3u8 && (!data.sources || data.sources.length === 0)) {
+        if (data.serverType !== 'embed' && !data.m3u8 && (!data.sources || data.sources.length === 0)) {
           setStreamError(data.error || `No stream available for "${data.title || 'this title'}" on server "${serverName}".`);
         }
       }
@@ -195,7 +225,7 @@ export default function NetflixPlayer({
     } finally {
       setIsLoadingStream(false);
     }
-  }, [media.id, media.media_type, selectedServer]);
+  }, [media.id, media.media_type, media.title, media.name, media.poster_path, media.backdrop_path, media.overview, selectedServer]);
 
   useEffect(() => {
     loadStreamData(currentSeason, currentEpisode, selectedServer);
@@ -844,183 +874,298 @@ export default function NetflixPlayer({
   const title = streamData?.title || media.title || media.name || 'Bingewatch Stream';
   const episodeTitle = streamData?.episodeTitle || (media.media_type === 'tv' ? `S${currentSeason}:E${currentEpisode}` : '');
 
+  const isEmbedMode = selectedServer === 'cinejoy' || streamData?.serverType === 'embed';
+  const embedUrl =
+    streamData?.embedUrl ||
+    (media.media_type === 'tv'
+      ? `https://cinejoy.to/watch/tv/${media.id}/${currentSeason}/${currentEpisode}`
+      : `https://cinejoy.to/watch/movie/${media.id}`);
+
   return (
     <div
       ref={containerRef}
       onPointerMove={handlePointerMove}
       className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden font-sans"
     >
-      {/* Video Element */}
-      <video
-        ref={videoRef}
-        playsInline
-        crossOrigin="anonymous"
-        className="w-full h-full object-contain cursor-pointer"
-        onLoadedMetadata={() => {
-          if (videoRef.current && videoRef.current.videoHeight > 0) {
-            setDetectedQuality(`${videoRef.current.videoHeight}p`);
-          }
-        }}
-        onTimeUpdate={() => {
-          if (!videoRef.current) return;
-          const ct = videoRef.current.currentTime;
-          const dur = videoRef.current.duration || 0;
-          setCurrentTime(ct);
-          setDuration(dur);
-          if (ct > 0) {
-            preservedTimeRef.current = ct;
-          }
-
-          if (videoRef.current.videoHeight > 0) {
-            const vh = `${videoRef.current.videoHeight}p`;
-            if (vh !== detectedQuality) {
-              setDetectedQuality(vh);
-            }
-          }
-
-          // Report progress every second
-          if (onProgress && ct > 0 && Math.abs(ct - lastSavedTimeRef.current) >= 1) {
-            lastSavedTimeRef.current = ct;
-            onProgress(media, currentSeason, currentEpisode, ct, dur);
-          }
-
-          // Calculate buffered percentage
-          if (videoRef.current.buffered.length > 0) {
-            const end = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
-            setBufferedPercent(dur > 0 ? (end / dur) * 100 : 0);
-          }
-
-          // Trigger binge next episode prompt in last 20 seconds
-          if (dur > 30 && dur - ct <= 20 && streamData?.nextEpisode && !showNextPrompt) {
-            setShowNextPrompt(true);
-          }
-        }}
-        onWaiting={() => setIsBuffering(true)}
-        onPlaying={() => {
-          setIsBuffering(false);
-          setIsPlaying(true);
-        }}
-        onPause={() => setIsPlaying(false)}
-        onEnded={() => {
-          setIsPlaying(false);
-          if (streamData?.nextEpisode) {
-            playNextEpisode();
-          }
-        }}
-      >
-        {/* Active API Subtitle Track */}
-        {selectedApiSubIndex >= 0 && streamData?.tracks?.[selectedApiSubIndex] && (
-          <track
-            key={`${selectedApiSubIndex}-${streamData.tracks[selectedApiSubIndex].file}`}
-            kind="subtitles"
-            src={streamData.tracks[selectedApiSubIndex].file}
-            srcLang={streamData.tracks[selectedApiSubIndex].language || 'en'}
-            label={streamData.tracks[selectedApiSubIndex].display || streamData.tracks[selectedApiSubIndex].label}
-            default
+      {/* 1. Embedded Player Mode (Cinejoy / Direct Embed) */}
+      {isEmbedMode ? (
+        <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
+          <iframe
+            key={`${embedUrl}-${currentSeason}-${currentEpisode}`}
+            src={embedUrl}
+            title={`${title} Stream`}
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+            allowFullScreen
+            className="w-full h-full border-0 z-10 bg-black"
           />
-        )}
-      </video>
 
-      {/* Transparent Gesture Touch Plane */}
-      <div
-        onClick={handleGestureTap}
-        onPointerDown={handlePointerDownContainer}
-        onPointerUp={handlePointerUpContainer}
-        onPointerCancel={handlePointerUpContainer}
-        className="absolute inset-0 z-20 cursor-pointer touch-none"
-      />
+          {/* Floating Sync Controller Toggle Button */}
+          <div className="absolute top-4 right-4 z-40 flex items-center gap-2 pointer-events-auto">
+            <button
+              onClick={() => setShowEmbedControls((prev) => !prev)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950/90 hover:bg-neutral-900 text-neutral-200 hover:text-white text-xs font-semibold rounded-full border border-neutral-700 shadow-2xl backdrop-blur-md transition-all cursor-pointer"
+              title={showEmbedControls ? 'Hide Bar (Distraction-Free)' : 'Show Bar & Controls'}
+            >
+              {showEmbedControls ? <EyeOff className="w-3.5 h-3.5 text-neutral-300" /> : <Eye className="w-3.5 h-3.5 text-white" />}
+              <span>{showEmbedControls ? 'Hide Controls' : 'Show Controls'}</span>
+            </button>
+          </div>
 
-      {/* Double Tap Seek Feedback Ripple Indicators */}
-      <AnimatePresence>
-        {seekRipple?.direction === 'left' && (
-          <motion.div
-            key={`seek-left-${seekRipple.id}`}
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.15 }}
-            transition={{ duration: 0.35 }}
-            className="absolute left-10 sm:left-24 top-1/2 -translate-y-1/2 pointer-events-none z-40 flex flex-col items-center justify-center p-6 text-white"
-          >
-            <RotateCcw className="w-12 h-12 text-white drop-shadow-lg" />
-            <span className="text-sm font-black text-white mt-1.5 tracking-wider font-mono drop-shadow-md">
-              10 seconds
-            </span>
-          </motion.div>
-        )}
+          {/* Synced Top Navigation & Action Bar in Embed Mode */}
+          <AnimatePresence>
+            {showEmbedControls && (
+              <motion.div
+                initial={{ y: -80, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                exit={{ y: -80, opacity: 0 }}
+                transition={{ duration: 0.22, ease: 'easeOut' }}
+                style={{
+                  background:
+                    'linear-gradient(to bottom, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0.75) 40%, rgba(0, 0, 0, 0.2) 80%, rgba(0, 0, 0, 0) 100%)',
+                }}
+                className="absolute top-0 left-0 right-0 z-30 p-4 sm:p-6 flex items-center justify-between pointer-events-auto"
+              >
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={handleClosePlayer}
+                    className="p-2 text-white hover:text-neutral-300 transition-colors cursor-pointer"
+                    title="Back to Browse"
+                  >
+                    <ArrowLeft className="w-6 h-6 text-white" />
+                  </button>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-white drop-shadow-md flex items-center gap-2">
+                      <span>{title}</span>
+                      <span className="text-[10px] uppercase font-bold bg-neutral-800 text-neutral-300 border border-neutral-700 px-2 py-0.5 rounded-xs">
+                        Embed
+                      </span>
+                    </h2>
+                    {episodeTitle && (
+                      <p className="text-xs text-neutral-300 font-medium">
+                        {episodeTitle}
+                      </p>
+                    )}
+                  </div>
+                </div>
 
-        {seekRipple?.direction === 'right' && (
-          <motion.div
-            key={`seek-right-${seekRipple.id}`}
-            initial={{ opacity: 0, scale: 0.8 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.15 }}
-            transition={{ duration: 0.35 }}
-            className="absolute right-10 sm:right-24 top-1/2 -translate-y-1/2 pointer-events-none z-40 flex flex-col items-center justify-center p-6 text-white"
-          >
-            <RotateCw className="w-12 h-12 text-white drop-shadow-lg" />
-            <span className="text-sm font-black text-white mt-1.5 tracking-wider font-mono drop-shadow-md">
-              10 seconds
-            </span>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                <div className="flex items-center gap-2 mr-32 sm:mr-36">
+                  {media.media_type === 'tv' && (
+                    <>
+                      <button
+                        onClick={playPrevEpisode}
+                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                        title="Previous Episode"
+                      >
+                        <SkipBack className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Prev</span>
+                      </button>
+                      <button
+                        onClick={() => setShowEpisodesDrawer(true)}
+                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
+                        title="Episodes List"
+                      >
+                        <Tv className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Episodes</span>
+                      </button>
+                      <button
+                        onClick={playNextEpisode}
+                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                        title="Next Episode"
+                      >
+                        <span className="hidden sm:inline">Next</span>
+                        <SkipForward className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
 
-      {/* Buffering Spinner when controls are hidden */}
-      {!showControls && (isBuffering || isLoadingStream) && !streamError && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-          <Loader2 className="w-12 h-12 text-white animate-spin drop-shadow-2xl" />
+                  <button
+                    onClick={() => setShowSourceSelector(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer"
+                    title="Change Streaming Server"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-neutral-400" />
+                    <span>Server: Cinejoy</span>
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
-      )}
-
-      {/* 2x Speed Holding HUD Indicator */}
-      {isHolding2x && (
-        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-40 bg-black/90 border border-neutral-700 px-4 py-1.5 rounded-full flex items-center gap-2 pointer-events-none shadow-2xl animate-pulse">
-          <FastForward className="w-4 h-4 text-white fill-current animate-bounce" />
-          <span className="text-xs font-bold text-white tracking-wider uppercase font-mono">2X Speeding</span>
-        </div>
-      )}
-
-      {/* Subtitle Layer (Placed in clean overlay layer above controls with customizable style, font size, height, and bg) */}
-      {activeSubtitleText && (
-        <div
-          style={{
-            bottom: `${(showControls ? 76 : 16) + subHeightPx}px`,
-          }}
-          className="absolute left-1/2 -translate-x-1/2 text-center pointer-events-none z-30 transition-all duration-200 max-w-3xl px-4 w-full"
-        >
-          <span
-            style={{
-              fontSize: `${subFontSizePx}px`,
-              ...(subBg === 'none'
-                ? {
-                    WebkitTextStroke: '1px #000000',
-                    textShadow: '0 2px 4px rgba(0, 0, 0, 0.95)',
-                  }
-                : {}),
+      ) : (
+        <>
+          {/* 2. Custom Video Player (HLS / Native Stream) */}
+          <video
+            ref={videoRef}
+            playsInline
+            crossOrigin="anonymous"
+            className="w-full h-full object-contain cursor-pointer"
+            onLoadedMetadata={() => {
+              if (videoRef.current && videoRef.current.videoHeight > 0) {
+                setDetectedQuality(`${videoRef.current.videoHeight}p`);
+              }
             }}
-            className={`inline-block px-3.5 py-1.5 rounded-xs select-none leading-snug transition-all ${
-              subBg === 'none'
-                ? 'bg-transparent font-bold'
-                : subBg === 'black-solid'
-                ? 'bg-black shadow-2xl border border-neutral-900'
-                : subBg === 'gray'
-                ? 'bg-neutral-900/95 shadow-2xl border border-neutral-800'
-                : subBg === 'blue'
-                ? 'bg-blue-950/95 shadow-2xl border border-blue-900'
-                : 'bg-black/85 shadow-2xl border border-neutral-900'
-            } ${
-              subColor === 'yellow'
-                ? 'text-yellow-300'
-                : subColor === 'cyan'
-                ? 'text-cyan-300'
-                : subColor === 'green'
-                ? 'text-emerald-300'
-                : 'text-white'
-            }`}
+            onTimeUpdate={() => {
+              if (!videoRef.current) return;
+              const ct = videoRef.current.currentTime;
+              const dur = videoRef.current.duration || 0;
+              setCurrentTime(ct);
+              setDuration(dur);
+              if (ct > 0) {
+                preservedTimeRef.current = ct;
+              }
+
+              if (videoRef.current.videoHeight > 0) {
+                const vh = `${videoRef.current.videoHeight}p`;
+                if (vh !== detectedQuality) {
+                  setDetectedQuality(vh);
+                }
+              }
+
+              // Report progress every second
+              if (onProgress && ct > 0 && Math.abs(ct - lastSavedTimeRef.current) >= 1) {
+                lastSavedTimeRef.current = ct;
+                onProgress(media, currentSeason, currentEpisode, ct, dur);
+              }
+
+              // Calculate buffered percentage
+              if (videoRef.current.buffered.length > 0) {
+                const end = videoRef.current.buffered.end(videoRef.current.buffered.length - 1);
+                setBufferedPercent(dur > 0 ? (end / dur) * 100 : 0);
+              }
+
+              // Trigger binge next episode prompt in last 20 seconds
+              if (dur > 30 && dur - ct <= 20 && streamData?.nextEpisode && !showNextPrompt) {
+                setShowNextPrompt(true);
+              }
+            }}
+            onWaiting={() => setIsBuffering(true)}
+            onPlaying={() => {
+              setIsBuffering(false);
+              setIsPlaying(true);
+            }}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => {
+              setIsPlaying(false);
+              if (streamData?.nextEpisode) {
+                playNextEpisode();
+              }
+            }}
           >
-            {activeSubtitleText}
-          </span>
-        </div>
+            {/* Active API Subtitle Track */}
+            {selectedApiSubIndex >= 0 && streamData?.tracks?.[selectedApiSubIndex] && (
+              <track
+                key={`${selectedApiSubIndex}-${streamData.tracks[selectedApiSubIndex].file}`}
+                kind="subtitles"
+                src={streamData.tracks[selectedApiSubIndex].file}
+                srcLang={streamData.tracks[selectedApiSubIndex].language || 'en'}
+                label={streamData.tracks[selectedApiSubIndex].display || streamData.tracks[selectedApiSubIndex].label}
+                default
+              />
+            )}
+          </video>
+
+          {/* Transparent Gesture Touch Plane */}
+          <div
+            onClick={handleGestureTap}
+            onPointerDown={handlePointerDownContainer}
+            onPointerUp={handlePointerUpContainer}
+            onPointerCancel={handlePointerUpContainer}
+            className="absolute inset-0 z-20 cursor-pointer touch-none"
+          />
+
+          {/* Double Tap Seek Feedback Ripple Indicators */}
+          <AnimatePresence>
+            {seekRipple?.direction === 'left' && (
+              <motion.div
+                key={`seek-left-${seekRipple.id}`}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.15 }}
+                transition={{ duration: 0.35 }}
+                className="absolute left-10 sm:left-24 top-1/2 -translate-y-1/2 pointer-events-none z-40 flex flex-col items-center justify-center p-6 text-white"
+              >
+                <RotateCcw className="w-12 h-12 text-white drop-shadow-lg" />
+                <span className="text-sm font-black text-white mt-1.5 tracking-wider font-mono drop-shadow-md">
+                  10 seconds
+                </span>
+              </motion.div>
+            )}
+
+            {seekRipple?.direction === 'right' && (
+              <motion.div
+                key={`seek-right-${seekRipple.id}`}
+                initial={{ opacity: 0, scale: 0.8 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.15 }}
+                transition={{ duration: 0.35 }}
+                className="absolute right-10 sm:right-24 top-1/2 -translate-y-1/2 pointer-events-none z-40 flex flex-col items-center justify-center p-6 text-white"
+              >
+                <RotateCw className="w-12 h-12 text-white drop-shadow-lg" />
+                <span className="text-sm font-black text-white mt-1.5 tracking-wider font-mono drop-shadow-md">
+                  10 seconds
+                </span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Buffering Spinner when controls are hidden */}
+          {!showControls && (isBuffering || isLoadingStream) && !streamError && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+              <Loader2 className="w-12 h-12 text-white animate-spin drop-shadow-2xl" />
+            </div>
+          )}
+
+          {/* 2x Speed Holding HUD Indicator */}
+          {isHolding2x && (
+            <div className="absolute top-12 left-1/2 -translate-x-1/2 z-40 bg-black/90 border border-neutral-700 px-4 py-1.5 rounded-full flex items-center gap-2 pointer-events-none shadow-2xl animate-pulse">
+              <FastForward className="w-4 h-4 text-white fill-current animate-bounce" />
+              <span className="text-xs font-bold text-white tracking-wider uppercase font-mono">2X Speeding</span>
+            </div>
+          )}
+
+          {/* Subtitle Layer */}
+          {activeSubtitleText && (
+            <div
+              style={{
+                bottom: `${(showControls ? 76 : 16) + subHeightPx}px`,
+              }}
+              className="absolute left-1/2 -translate-x-1/2 text-center pointer-events-none z-30 transition-all duration-200 max-w-3xl px-4 w-full"
+            >
+              <span
+                style={{
+                  fontSize: `${subFontSizePx}px`,
+                  ...(subBg === 'none'
+                    ? {
+                        WebkitTextStroke: '1px #000000',
+                        textShadow: '0 2px 4px rgba(0, 0, 0, 0.95)',
+                      }
+                    : {}),
+                }}
+                className={`inline-block px-3.5 py-1.5 rounded-xs select-none leading-snug transition-all ${
+                  subBg === 'none'
+                    ? 'bg-transparent font-bold'
+                    : subBg === 'black-solid'
+                    ? 'bg-black shadow-2xl border border-neutral-900'
+                    : subBg === 'gray'
+                    ? 'bg-neutral-900/95 shadow-2xl border border-neutral-800'
+                    : subBg === 'blue'
+                    ? 'bg-blue-950/95 shadow-2xl border border-blue-900'
+                    : 'bg-black/85 shadow-2xl border border-neutral-900'
+                } ${
+                  subColor === 'yellow'
+                    ? 'text-yellow-300'
+                    : subColor === 'cyan'
+                    ? 'text-cyan-300'
+                    : subColor === 'green'
+                    ? 'text-emerald-300'
+                    : 'text-white'
+                }`}
+              >
+                {activeSubtitleText}
+              </span>
+            </div>
+          )}
+        </>
       )}
 
       {/* Error State Overlay */}

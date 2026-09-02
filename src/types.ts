@@ -113,6 +113,8 @@ export interface MediaStreamData {
   sources: StreamSource[];
   tracks?: SubtitleTrack[];
   subtitlesTotal?: number;
+  embedUrl?: string;
+  serverType?: 'hls' | 'embed';
   nextEpisode?: {
     season: number;
     episode: number;

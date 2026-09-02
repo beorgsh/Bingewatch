@@ -4,12 +4,14 @@ export interface StreamServerOption {
   id: string;
   name: string;
   desc: string;
+  type?: 'hls' | 'embed';
 }
 
 export const STREAM_SERVERS: StreamServerOption[] = [
-  { id: 'lisbon', name: 'Lisbon', desc: 'Primary Fast CDN' },
-  { id: 'nebula', name: 'Nebula', desc: 'Edge Relay Server' },
-  { id: 'solara', name: 'Solara', desc: 'High Bitrate HD' },
+  { id: 'cinejoy', name: 'Cinejoy', desc: 'Direct Embed Stream', type: 'embed' },
+  { id: 'lisbon', name: 'Lisbon', desc: 'Primary Fast CDN', type: 'hls' },
+  { id: 'nebula', name: 'Nebula', desc: 'Edge Relay Server', type: 'hls' },
+  { id: 'solara', name: 'Solara', desc: 'High Bitrate HD', type: 'hls' },
 ];
 
 export const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p';
