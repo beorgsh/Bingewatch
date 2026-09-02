@@ -6,6 +6,8 @@ interface NavbarProps {
   setActiveTab: (tab: string) => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
+  isSearchOpen?: boolean;
+  setIsSearchOpen?: (open: boolean) => void;
   onOpenCustomStream: () => void;
   myListCount: number;
 }
@@ -15,12 +17,23 @@ export default function Navbar({
   setActiveTab,
   searchQuery,
   setSearchQuery,
+  isSearchOpen: externalIsSearchOpen,
+  setIsSearchOpen: externalSetIsSearchOpen,
   onOpenCustomStream,
   myListCount,
 }: NavbarProps) {
   const [isScrolled, setIsScrolled] = useState(false);
-  const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [internalIsSearchOpen, setInternalIsSearchOpen] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
+
+  const isSearchOpen = externalIsSearchOpen !== undefined ? externalIsSearchOpen : internalIsSearchOpen;
+  const setIsSearchOpen = (open: boolean) => {
+    if (externalSetIsSearchOpen) {
+      externalSetIsSearchOpen(open);
+    } else {
+      setInternalIsSearchOpen(open);
+    }
+  };
 
   useEffect(() => {
     const handleScroll = () => {

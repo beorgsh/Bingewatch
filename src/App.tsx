@@ -28,6 +28,7 @@ export default function App() {
   // Navigation & View State
   const [activeTab, setActiveTab] = useState<'home' | 'tv' | 'movies' | 'popular' | 'mylist'>('home');
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedGenre, setSelectedGenre] = useState<number | null>(null);
 
   // Active Interactive Overlays
@@ -302,82 +303,94 @@ export default function App() {
       {/* 1. Netflix Navigation Bar */}
       <Navbar
         activeTab={activeTab}
-        setActiveTab={(tab: any) => setActiveTab(tab)}
+        setActiveTab={(tab: any) => {
+          setActiveTab(tab);
+          setIsSearchOpen(false);
+          setSearchQuery('');
+        }}
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
+        isSearchOpen={isSearchOpen}
+        setIsSearchOpen={setIsSearchOpen}
         onOpenCustomStream={() => setShowCustomStreamModal(true)}
         myListCount={myList.length}
       />
 
-      {/* 2. Main Content Routing */}
-      {searchQuery.trim() ? (
-        /* Live Search Results View */
-        <SearchOverlay
-          query={searchQuery}
-          onClose={() => setSearchQuery('')}
-          onPlay={handlePlayMedia}
-          onOpenDetails={handleOpenDetails}
-          isInMyList={isInMyList}
-          onToggleMyList={toggleMyList}
-        />
-      ) : activeTab === 'mylist' ? (
-        /* My List View */
-        <MyListView
-          items={myList}
-          onPlay={handlePlayMedia}
-          onOpenDetails={handleOpenDetails}
-          onRemoveFromList={removeFromMyList}
-        />
-      ) : (
-        /* Standard Catalog Views (Home, TV Shows, Movies, New & Popular) */
-        <main className="pb-24">
-          {/* Billboard Hero Banner */}
-          <HeroBanner
-            media={heroMedia}
-            mediaList={rows[0]?.items?.length ? rows[0].items.slice(0, 8) : (heroMedia ? [heroMedia] : [])}
+      {/* 2. Main Content Routing (Constrained in max-w-7xl 2xl:max-w-screen-2xl mx-auto w-full to prevent stretching on wide screens) */}
+      <div className="w-full max-w-7xl 2xl:max-w-screen-2xl mx-auto">
+        {isSearchOpen || searchQuery.trim() ? (
+          /* Live Search & Default Top 10 Container View */
+          <SearchOverlay
+            query={searchQuery}
+            onClose={() => {
+              setIsSearchOpen(false);
+              setSearchQuery('');
+            }}
             onPlay={handlePlayMedia}
             onOpenDetails={handleOpenDetails}
             isInMyList={isInMyList}
             onToggleMyList={toggleMyList}
+            defaultTop10={rows[0]?.items || []}
           />
+        ) : activeTab === 'mylist' ? (
+          /* My List View */
+          <MyListView
+            items={myList}
+            onPlay={handlePlayMedia}
+            onOpenDetails={handleOpenDetails}
+            onRemoveFromList={removeFromMyList}
+          />
+        ) : (
+          /* Standard Catalog Views (Home, TV Shows, Movies, New & Popular) */
+          <main className="pb-24">
+            {/* Billboard Hero Banner */}
+            <HeroBanner
+              media={heroMedia}
+              mediaList={rows[0]?.items?.length ? rows[0].items.slice(0, 8) : (heroMedia ? [heroMedia] : [])}
+              onPlay={handlePlayMedia}
+              onOpenDetails={handleOpenDetails}
+              isInMyList={isInMyList}
+              onToggleMyList={toggleMyList}
+            />
 
-          {/* Netflix Media Rows with Colored Posters */}
-          <div className="relative z-20 -mt-12 sm:-mt-24 space-y-2">
-            {/* Streaming Networks & Platforms Row (Netflix, Disney+, Prime, HBO Max, Apple TV+, etc.) */}
-            <PlatformsRow onSelectPlatform={(platform) => setSelectedPlatform(platform)} />
+            {/* Netflix Media Rows with Colored Posters */}
+            <div className="relative z-20 -mt-12 sm:-mt-24 space-y-2">
+              {/* Streaming Networks & Platforms Row (Netflix, Disney+, Prime, HBO Max, Apple TV+, etc.) */}
+              <PlatformsRow onSelectPlatform={(platform) => setSelectedPlatform(platform)} />
 
-            {/* Dedicated Continue Watching Landscape Slide Row */}
-            {activeTab === 'home' && continueWatching.length > 0 && (
-              <ContinueWatchingRow
-                items={continueWatching}
-                onPlay={(med, s, ep) => handlePlayMedia(med, s, ep)}
-                onOpenDetails={handleOpenDetails}
-                onRemoveItem={removeFromContinueWatching}
-              />
-            )}
-
-            {/* Catalog Categories */}
-            {isLoading ? (
-              <div className="py-24 text-center text-sm font-mono text-neutral-500 animate-pulse">
-                Synchronizing Bingewatch HLS Streaming Catalog...
-              </div>
-            ) : (
-              rows.map((row) => (
-                <MediaRow
-                  key={row.id}
-                  title={row.title}
-                  items={row.items}
-                  isTop10={row.isTop10}
-                  onPlay={handlePlayMedia}
+              {/* Dedicated Continue Watching Landscape Slide Row */}
+              {activeTab === 'home' && continueWatching.length > 0 && (
+                <ContinueWatchingRow
+                  items={continueWatching}
+                  onPlay={(med, s, ep) => handlePlayMedia(med, s, ep)}
                   onOpenDetails={handleOpenDetails}
-                  isInMyList={isInMyList}
-                  onToggleMyList={toggleMyList}
+                  onRemoveItem={removeFromContinueWatching}
                 />
-              ))
-            )}
-          </div>
-        </main>
-      )}
+              )}
+
+              {/* Catalog Categories */}
+              {isLoading ? (
+                <div className="py-24 text-center text-sm font-mono text-neutral-500 animate-pulse">
+                  Synchronizing Bingewatch HLS Streaming Catalog...
+                </div>
+              ) : (
+                rows.map((row) => (
+                  <MediaRow
+                    key={row.id}
+                    title={row.title}
+                    items={row.items}
+                    isTop10={row.isTop10}
+                    onPlay={handlePlayMedia}
+                    onOpenDetails={handleOpenDetails}
+                    isInMyList={isInMyList}
+                    onToggleMyList={toggleMyList}
+                  />
+                ))
+              )}
+            </div>
+          </main>
+        )}
+      </div>
 
       {/* 3. Detail "More Info" Modal */}
       <AnimatePresence>
