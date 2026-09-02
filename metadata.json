@@ -1,0 +1,8 @@
+{
+  "name": "Bingewatch",
+  "description": "A Netflix-style streaming web app with black \u0026 white UI, vivid color posters, TMDB metadata discovery, and custom HLS video player.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
