@@ -646,6 +646,107 @@ apiRouter.get("/tmdb/tv/:id/season/:season_number", async (req: Request, res: Re
 });
 
 // Mount router under both '/api' and '/' so it works seamlessly on Vercel Functions & Local Dev
+// YouTube Real Transcript Fetcher Endpoint
+apiRouter.get("/youtube-transcript/:videoId", async (req: Request, res: Response) => {
+  const { videoId } = req.params;
+  if (!videoId || videoId.length < 5 || videoId === "undefined" || videoId === "null") {
+    res.status(400).json({ error: "Invalid video ID", cues: [] });
+    return;
+  }
+
+  try {
+    let cues: { start: number; end: number; text: string }[] = [];
+
+    // 1. Attempt direct TimedText JSON fetch from YouTube
+    try {
+      const timedTextRes = await axios.get(
+        `https://www.youtube.com/api/timedtext?lang=en&v=${videoId}&fmt=json3`,
+        {
+          timeout: 4000,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          },
+          validateStatus: (s) => s < 400,
+        }
+      );
+      if (timedTextRes.data?.events && Array.isArray(timedTextRes.data.events)) {
+        cues = timedTextRes.data.events
+          .filter((e: any) => e.segs && Array.isArray(e.segs))
+          .map((e: any) => ({
+            start: Number(((e.tStartMs || 0) / 1000).toFixed(2)),
+            end: Number((((e.tStartMs || 0) + (e.dDurationMs || 3000)) / 1000).toFixed(2)),
+            text: e.segs
+              .map((s: any) => s.utf8 || "")
+              .join("")
+              .replace(/&#39;/g, "'")
+              .replace(/&quot;/g, '"')
+              .replace(/&amp;/g, '&')
+              .trim(),
+          }))
+          .filter((c: any) => c.text && c.text !== "\n");
+      }
+    } catch {
+      // Continue to fallback
+    }
+
+    // 2. If direct timedtext was empty, scrape initial player response caption tracks
+    if (!cues.length) {
+      try {
+        const watchRes = await axios.get(`https://www.youtube.com/watch?v=${videoId}`, {
+          timeout: 5000,
+          headers: {
+            "User-Agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          validateStatus: (s) => s < 400,
+        });
+        const match = watchRes.data?.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+        if (match && match[1]) {
+          const playerResponse = JSON.parse(match[1]);
+          const tracks =
+            playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+          if (tracks && tracks.length > 0) {
+            const englishTrack =
+              tracks.find((t: any) => t.languageCode === "en") || tracks[0];
+            if (englishTrack?.baseUrl) {
+              const captionRes = await axios.get(`${englishTrack.baseUrl}&fmt=json3`, {
+                timeout: 5000,
+                headers: { "User-Agent": "Mozilla/5.0" },
+                validateStatus: (s) => s < 400,
+              });
+              if (captionRes.data?.events && Array.isArray(captionRes.data.events)) {
+                cues = captionRes.data.events
+                  .filter((e: any) => e.segs && Array.isArray(e.segs))
+                  .map((e: any) => ({
+                    start: Number(((e.tStartMs || 0) / 1000).toFixed(2)),
+                    end: Number((((e.tStartMs || 0) + (e.dDurationMs || 3000)) / 1000).toFixed(2)),
+                    text: e.segs
+                      .map((s: any) => s.utf8 || "")
+                      .join("")
+                      .replace(/&#39;/g, "'")
+                      .replace(/&quot;/g, '"')
+                      .replace(/&amp;/g, '&')
+                      .trim(),
+                  }))
+                  .filter((c: any) => c.text && c.text !== "\n");
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        console.warn("YouTube player caption scrape error:", err.message);
+      }
+    }
+
+    res.setHeader("Cache-Control", "public, max-age=86400, s-maxage=604800");
+    res.json({ videoId, success: cues.length > 0, cues });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message, cues: [] });
+  }
+});
+
 app.use("/api", apiRouter);
 app.use("/", apiRouter);
 

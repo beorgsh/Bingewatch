@@ -15,6 +15,7 @@ import {
   Shuffle,
   Volume2,
   VolumeX,
+  Captions,
 } from 'lucide-react';
 import { TMDBMedia, VideoResult } from '../types';
 import {
@@ -27,6 +28,12 @@ import {
   getBackdropUrl,
   getPosterUrl,
 } from '../api/tmdb';
+import {
+  getTrailerSubtitles,
+  fetchRealTrailerSubtitles,
+  getActiveSubtitleText,
+  SubtitleCue,
+} from '../services/subtitleService';
 
 interface NewAndHotReelsProps {
   onPlay: (media: TMDBMedia) => void;
@@ -50,12 +57,16 @@ export default function NewAndHotReels({
   const [activeIndex, setActiveIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Audio State: managed via YouTube JS API postMessage to avoid restarting iframe
-  const [isMuted, setIsMuted] = useState(true);
+  // Audio State: managed via YouTube JS API postMessage to avoid restarting iframe - Default UNMUTED
+  const [isMuted, setIsMuted] = useState(false);
   const [muteToastVisible, setMuteToastVisible] = useState(false);
   const muteToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const [trailersMap, setTrailersMap] = useState<Record<number, string>>({});
+  const [loadedVideos, setLoadedVideos] = useState<Record<number, boolean>>({});
+  const [subtitlesMap, setSubtitlesMap] = useState<Record<number, SubtitleCue[]>>({});
+  const [showSubtitles, setShowSubtitles] = useState(true);
+  const [videoPlaybackTime, setVideoPlaybackTime] = useState(0);
   const [likedMap, setLikedMap] = useState<Record<number, boolean>>({});
   const [expandedOverviewIndex, setExpandedOverviewIndex] = useState<number | null>(null);
   const [copiedToast, setCopiedToast] = useState(false);
@@ -68,56 +79,82 @@ export default function NewAndHotReels({
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
 
-  // Function to send YouTube API commands to active trailer iframe
+  // Track mute state in a ref as well to prevent race conditions during rapid taps/toggles - Default UNMUTED
+  const isMutedRef = useRef(false);
+  const lastToggleTimeRef = useRef(0);
+
+  // Helper to safely send YouTube IFrame API commands to active trailer iframe
   const sendIframeCommand = useCallback((command: string, args: any[] = []) => {
+    // Look for iframe in the active reel container or any playing iframe
     const activeIframe = document.querySelector(
       `#reel-item-${activeIndex} iframe`
     ) as HTMLIFrameElement | null;
 
     if (activeIframe && activeIframe.contentWindow) {
-      activeIframe.contentWindow.postMessage(
-        JSON.stringify({
-          event: 'command',
-          func: command,
-          args: args,
-        }),
-        '*'
-      );
+      try {
+        activeIframe.contentWindow.postMessage(
+          JSON.stringify({
+            event: 'command',
+            func: command,
+            args: args,
+          }),
+          '*'
+        );
+      } catch (err) {
+        console.warn('Failed to send iframe command:', err);
+      }
     }
   }, [activeIndex]);
 
   // Seamless mute toggle handler: does NOT modify iframe src, preventing video restart
   const toggleMute = useCallback(() => {
-    setIsMuted((prevMuted) => {
-      const newMuted = !prevMuted;
-      
-      if (newMuted) {
-        sendIframeCommand('mute');
-      } else {
-        sendIframeCommand('unMute');
-        sendIframeCommand('setVolume', [100]);
-      }
+    // Throttle toggles by at least 250ms to prevent double-firing on mobile (e.g. touchEnd + synthetic click)
+    const now = Date.now();
+    if (now - lastToggleTimeRef.current < 250) {
+      return;
+    }
+    lastToggleTimeRef.current = now;
 
-      setMuteToastVisible(true);
-      if (muteToastTimeoutRef.current) {
-        clearTimeout(muteToastTimeoutRef.current);
-      }
-      muteToastTimeoutRef.current = setTimeout(() => {
-        setMuteToastVisible(false);
-      }, 1000);
+    const nextMuted = !isMutedRef.current;
+    isMutedRef.current = nextMuted;
+    setIsMuted(nextMuted);
 
-      return newMuted;
-    });
+    if (nextMuted) {
+      sendIframeCommand('mute');
+    } else {
+      sendIframeCommand('unMute');
+      sendIframeCommand('setVolume', [100]);
+    }
+
+    setMuteToastVisible(true);
+    if (muteToastTimeoutRef.current) {
+      clearTimeout(muteToastTimeoutRef.current);
+    }
+    muteToastTimeoutRef.current = setTimeout(() => {
+      setMuteToastVisible(false);
+    }, 1000);
   }, [sendIframeCommand]);
 
   // If user unmuted, automatically unmute newly active reel trailer once loaded
   useEffect(() => {
     if (!isMuted) {
-      const timer = setTimeout(() => {
+      // Send multiple sync attempts as iframe initialises
+      const timer1 = setTimeout(() => {
         sendIframeCommand('unMute');
         sendIframeCommand('setVolume', [100]);
-      }, 700);
-      return () => clearTimeout(timer);
+      }, 400);
+
+      const timer2 = setTimeout(() => {
+        sendIframeCommand('unMute');
+        sendIframeCommand('setVolume', [100]);
+      }, 1000);
+
+      return () => {
+        clearTimeout(timer1);
+        clearTimeout(timer2);
+      };
+    } else {
+      sendIframeCommand('mute');
     }
   }, [activeIndex, isMuted, sendIframeCommand]);
 
@@ -185,6 +222,31 @@ export default function NewAndHotReels({
     };
   }, [activeCategory]);
 
+  // Synchronized playback timer for real-time subtitle captions
+  useEffect(() => {
+    const startTime = Date.now();
+    let frameId: number;
+
+    const loop = () => {
+      const elapsed = (Date.now() - startTime) / 1000;
+      setVideoPlaybackTime(elapsed);
+      frameId = requestAnimationFrame(loop);
+    };
+
+    frameId = requestAnimationFrame(loop);
+
+    // Immediately prepare subtitles for current media
+    const currentMedia = items[activeIndex];
+    if (currentMedia) {
+      const key = trailersMap[currentMedia.id] || 'active';
+      fetchRealTrailerSubtitles(key, currentMedia).then((cues) => {
+        setSubtitlesMap((prev) => ({ ...prev, [currentMedia.id]: cues }));
+      });
+    }
+
+    return () => cancelAnimationFrame(frameId);
+  }, [activeIndex, items, trailersMap]);
+
   // 3. Fetch trailers for active and neighboring items
   useEffect(() => {
     if (items.length === 0) return;
@@ -205,16 +267,31 @@ export default function NewAndHotReels({
               videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer') ||
               videos.find((v) => v.site === 'YouTube' && v.type === 'Teaser') ||
               videos.find((v) => v.site === 'YouTube');
+            const trailerKey = trailer?.key || '';
             setTrailersMap((prev) => ({
               ...prev,
-              [item.id]: trailer?.key || '',
+              [item.id]: trailerKey,
             }));
+            if (trailerKey) {
+              fetchRealTrailerSubtitles(trailerKey, item).then((cues) => {
+                setSubtitlesMap((prev) => ({ ...prev, [item.id]: cues }));
+              });
+            }
           })
           .catch(() => {
             setTrailersMap((prev) => ({ ...prev, [item.id]: '' }));
           });
       }
     });
+
+    // Auto-reveal active reel trailer with smooth transition
+    const activeMedia = items[activeIndex];
+    if (activeMedia && trailersMap[activeMedia.id]) {
+      const timer = setTimeout(() => {
+        setLoadedVideos((prev) => ({ ...prev, [activeMedia.id]: true }));
+      }, 500);
+      return () => clearTimeout(timer);
+    }
   }, [activeIndex, items, trailersMap]);
 
   // 4. Scroll to target index helper
@@ -413,7 +490,7 @@ export default function NewAndHotReels({
       }}
     >
       {/* 1. Fixed Top Header Overlay with Edge Vanishing Fade Effect */}
-      <div className="absolute top-0 left-0 right-0 z-40 px-3 sm:px-6 pt-3 sm:pt-4 pb-12 bg-gradient-to-b from-black/90 via-black/50 to-transparent pointer-events-none flex items-center justify-between">
+      <div className="absolute top-0 left-0 right-0 z-40 px-3 sm:px-6 pt-3 sm:pt-4 pb-6 bg-gradient-to-b from-black/60 via-black/20 to-transparent pointer-events-none flex items-center justify-between">
         <div className="flex items-center gap-2 pointer-events-auto flex-1 min-w-0">
           {onBack && (
             <button
@@ -425,18 +502,15 @@ export default function NewAndHotReels({
             </button>
           )}
 
-          {/* Slidable Category Switcher with Vanishing Gradient Edge Fade Masks */}
+          {/* Slidable Category Switcher with Smooth Edge Vanishing Fade Mask */}
           <div className="relative flex-1 min-w-0 max-w-[72vw] sm:max-w-md">
-            {/* Left Fade Edge */}
-            <div className="absolute left-0 top-0 bottom-0 w-5 bg-gradient-to-r from-black/90 to-transparent pointer-events-none z-10" />
-
-            {/* Scrollable Container with CSS Mask for Smooth Edge Vanishing */}
+            {/* Scrollable Container with Pure Alpha CSS Mask for Smooth Edge Vanishing without Black Box Background */}
             <div
               ref={categoryScrollRef}
-              className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 px-3 snap-x touch-pan-x"
+              className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 px-4 snap-x touch-pan-x"
               style={{
-                maskImage: 'linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent)',
-                WebkitMaskImage: 'linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent)',
+                maskImage: 'linear-gradient(to right, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)',
+                WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 20px, black calc(100% - 20px), transparent 100%)',
               }}
             >
               <button
@@ -501,9 +575,6 @@ export default function NewAndHotReels({
                 <span>Reels</span>
               </button>
             </div>
-
-            {/* Right Fade Edge */}
-            <div className="absolute right-0 top-0 bottom-0 w-5 bg-gradient-to-l from-black/90 to-transparent pointer-events-none z-10" />
           </div>
         </div>
 
@@ -563,6 +634,7 @@ export default function NewAndHotReels({
           const isNearby = Math.abs(index - activeIndex) <= 1;
           const trailerKey = trailersMap[item.id];
           const isOverviewExpanded = expandedOverviewIndex === index;
+          const isVideoLoaded = loadedVideos[item.id] || false;
 
           return (
             <div
@@ -570,33 +642,62 @@ export default function NewAndHotReels({
               id={`reel-item-${index}`}
               className="relative w-full h-screen snap-start snap-always shrink-0 overflow-hidden flex flex-col justify-end bg-neutral-950"
             >
-              {/* Background Video Trailer / Backdrop Poster */}
+              {/* Background Video Trailer / Backdrop Poster with Smooth Crossfade */}
               <div className="absolute inset-0 z-0 bg-neutral-950 overflow-hidden">
-                {isCurrentActive && trailerKey ? (
-                  <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                {/* 1. Base High-Res Backdrop Poster (Only shown if video is not active or still loading) */}
+                {(isNearby || isCurrentActive) && (
+                  <img
+                    src={backdropUrl || posterUrl}
+                    alt={title}
+                    className={`w-full h-full object-cover object-center transition-opacity duration-700 ease-in-out ${
+                      isCurrentActive && trailerKey && isVideoLoaded ? 'opacity-0' : 'opacity-100'
+                    }`}
+                    loading="lazy"
+                  />
+                )}
+
+                {/* 2. Video Trailer Iframe with Subtitles inside visible ratio and smooth fade-in */}
+                {isCurrentActive && trailerKey && (
+                  <div
+                    className={`absolute inset-0 overflow-hidden pointer-events-none z-0 transition-opacity duration-700 ease-in-out flex items-center justify-center ${
+                      isVideoLoaded ? 'opacity-100' : 'opacity-0'
+                    }`}
+                  >
                     <iframe
-                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(
+                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${isMuted ? 1 : 0}&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&cc_load_policy=0&hl=en&cc_lang_pref=off&enablejsapi=1&origin=${encodeURIComponent(
                         typeof window !== 'undefined' ? window.location.origin : ''
                       )}`}
                       title={`${title} Trailer`}
                       allow="autoplay; encrypted-media"
-                      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180vw] h-[105vw] min-w-[200vh] min-h-[115vh] object-cover pointer-events-none scale-110"
+                      onLoad={() => {
+                        setLoadedVideos((prev) => ({ ...prev, [item.id]: true }));
+                        sendIframeCommand('unloadModule', ['captions']);
+                        sendIframeCommand('unloadModule', ['cc']);
+                        sendIframeCommand('setOption', ['captions', 'track', {}]);
+                        sendIframeCommand('setOption', ['cc', 'track', {}]);
+                        if (!isMutedRef.current) {
+                          sendIframeCommand('unMute');
+                          sendIframeCommand('setVolume', [100]);
+                        }
+                        // Secondary checks to ensure YouTube captions module remains deactivated
+                        setTimeout(() => {
+                          sendIframeCommand('unloadModule', ['captions']);
+                          sendIframeCommand('unloadModule', ['cc']);
+                          sendIframeCommand('setOption', ['captions', 'track', {}]);
+                        }, 400);
+                        setTimeout(() => {
+                          sendIframeCommand('unloadModule', ['captions']);
+                          sendIframeCommand('unloadModule', ['cc']);
+                          sendIframeCommand('setOption', ['captions', 'track', {}]);
+                        }, 1200);
+                      }}
+                      className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[120vw] h-[68vw] min-w-[125vh] min-h-[72vh] object-cover pointer-events-none"
                     />
                   </div>
-                ) : (
-                  (isNearby || isCurrentActive) && (
-                    <img
-                      src={backdropUrl || posterUrl}
-                      alt={title}
-                      className="w-full h-full object-cover object-center"
-                      loading="lazy"
-                    />
-                  )
                 )}
 
-                {/* Dark Vignette Gradients for Crisp Readability */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent pointer-events-none z-10"></div>
-                <div className="absolute inset-0 bg-gradient-to-b from-black/80 via-transparent to-transparent pointer-events-none z-10"></div>
+                {/* Subtle Transparent Bottom Gradient for Text Legibility (keeping video fully visible and bright) */}
+                <div className="absolute bottom-0 left-0 right-0 h-2/5 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none z-10"></div>
               </div>
 
               {/* Reel Right Action Sidebar (Netflix Fast Laughs style) */}
@@ -639,7 +740,22 @@ export default function NewAndHotReels({
                   </span>
                 </button>
 
-                {/* 3. Share URL */}
+                {/* 3. Subtitles / CC Toggle */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowSubtitles((prev) => !prev);
+                  }}
+                  className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
+                  title={showSubtitles ? 'Disable Captions' : 'Enable Captions'}
+                >
+                  <div className="p-3 rounded-full text-white group-hover:text-yellow-400 transition-colors shadow-xl">
+                    <Captions className={`w-5 h-5 ${showSubtitles ? 'text-yellow-400' : 'text-white/60'}`} />
+                  </div>
+                  <span className="text-[10px] font-semibold text-white drop-shadow-md">CC</span>
+                </button>
+
+                {/* 4. Share URL */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -654,7 +770,7 @@ export default function NewAndHotReels({
                   <span className="text-[10px] font-semibold text-white drop-shadow-md">Share</span>
                 </button>
 
-                {/* 4. More Details Modal */}
+                {/* 5. More Details Modal */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -669,7 +785,7 @@ export default function NewAndHotReels({
                   <span className="text-[10px] font-semibold text-white drop-shadow-md">Info</span>
                 </button>
 
-                {/* 5. Direct Play Action */}
+                {/* 6. Direct Play Action */}
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -708,6 +824,22 @@ export default function NewAndHotReels({
                     4K HDR
                   </span>
                 </div>
+
+                {/* Live Synchronized Closed Caption Overlay: Positioned Above the Title */}
+                {showSubtitles && (() => {
+                  const cues = subtitlesMap[item.id] || getTrailerSubtitles('active', item);
+                  const activeCueText = getActiveSubtitleText(cues, videoPlaybackTime);
+
+                  return (
+                    <div className="min-h-[32px] flex items-center">
+                      {activeCueText ? (
+                        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-md bg-black/85 backdrop-blur-md shadow-2xl text-xs sm:text-sm font-semibold text-yellow-300 transition-all duration-200">
+                          <span className="leading-snug tracking-wide drop-shadow-md">{activeCueText}</span>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })()}
 
                 {/* Reel Title */}
                 <h2 className="text-2xl sm:text-3xl lg:text-4xl font-black text-white tracking-tight leading-tight drop-shadow-xl">
