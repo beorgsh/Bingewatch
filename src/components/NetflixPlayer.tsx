@@ -472,6 +472,18 @@ export default function NetflixPlayer({
     } catch {}
   }, []);
 
+  const isClosingRef = useRef(false);
+
+  const handleClosePlayer = useCallback(() => {
+    if (isClosingRef.current) return;
+    isClosingRef.current = true;
+    unlockLandscape();
+    if (document.fullscreenElement || (document as any).webkitFullscreenElement) {
+      document.exitFullscreen?.().catch(() => {});
+    }
+    onClose();
+  }, [unlockLandscape, onClose]);
+
   // Fullscreen change listener and auto-enter fullscreen on player launch
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -481,6 +493,7 @@ export default function NetflixPlayer({
         lockLandscape();
       } else {
         unlockLandscape();
+        handleClosePlayer();
       }
     };
 
@@ -515,15 +528,32 @@ export default function NetflixPlayer({
       window.removeEventListener('click', handleFirstActivation);
       window.removeEventListener('touchstart', handleFirstActivation);
     };
-  }, [lockLandscape, unlockLandscape]);
+  }, [lockLandscape, unlockLandscape, handleClosePlayer]);
 
-  const handleClosePlayer = () => {
-    unlockLandscape();
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.().catch(() => {});
-    }
-    onClose();
-  };
+  // Push history state and listen for back button / Escape key to close player
+  useEffect(() => {
+    const handlePopState = () => {
+      handleClosePlayer();
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        handleClosePlayer();
+      }
+    };
+
+    try {
+      window.history.pushState({ netflixPlayer: true }, '');
+    } catch {}
+
+    window.addEventListener('popstate', handlePopState);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleClosePlayer]);
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
