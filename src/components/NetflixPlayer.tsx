@@ -20,10 +20,6 @@ import {
   Sparkles,
   Settings,
   X,
-  Maximize,
-  Minimize,
-  Eye,
-  EyeOff,
 } from 'lucide-react';
 import { TMDBMedia, MediaStreamData, SeasonDetails, Episode } from '../types';
 import { getMovieStream, getSeriesStream, getSeasonDetails, STREAM_SERVERS } from '../api/tmdb';
@@ -117,8 +113,7 @@ export default function NetflixPlayer({
 
   // Custom Stream URL & Server Selection
   const [customStreamInput, setCustomStreamInput] = useState('');
-  const [selectedServer, setSelectedServer] = useState<string>('cinejoy');
-  const [showEmbedControls, setShowEmbedControls] = useState<boolean>(true);
+  const [selectedServer, setSelectedServer] = useState<string>('lisbon');
   const preservedTimeRef = useRef<number>(0);
 
   // Helper to seek to initial timestamp or preserved timestamp across server switches
@@ -177,28 +172,11 @@ export default function NetflixPlayer({
 
     try {
       if (serverName === 'cinejoy') {
-        const embedUrl =
+        const cinejoyUrl =
           media.media_type === 'tv'
             ? `https://cinejoy.to/watch/tv/${media.id}/${seasonNum}/${episodeNum}`
             : `https://cinejoy.to/watch/movie/${media.id}`;
-        setStreamData({
-          success: true,
-          tmdbId: media.id,
-          mediaType: media.media_type === 'tv' ? 'tv' : 'movie',
-          title: media.title || media.name || '',
-          overview: media.overview || '',
-          posterPath: media.poster_path,
-          backdropPath: media.backdrop_path,
-          server: 'cinejoy',
-          serverType: 'embed',
-          embedUrl,
-          sources: [],
-          tracks: [],
-        });
-        if (media.media_type === 'tv') {
-          const sDetails = await getSeasonDetails(media.id, seasonNum);
-          setSeasonDetails(sDetails);
-        }
+        window.location.href = cinejoyUrl;
         setIsLoadingStream(false);
         return;
       }
@@ -874,127 +852,14 @@ export default function NetflixPlayer({
   const title = streamData?.title || media.title || media.name || 'Bingewatch Stream';
   const episodeTitle = streamData?.episodeTitle || (media.media_type === 'tv' ? `S${currentSeason}:E${currentEpisode}` : '');
 
-  const isEmbedMode = selectedServer === 'cinejoy' || streamData?.serverType === 'embed';
-  const embedUrl =
-    streamData?.embedUrl ||
-    (media.media_type === 'tv'
-      ? `https://cinejoy.to/watch/tv/${media.id}/${currentSeason}/${currentEpisode}`
-      : `https://cinejoy.to/watch/movie/${media.id}`);
-
   return (
     <div
       ref={containerRef}
       onPointerMove={handlePointerMove}
       className="fixed inset-0 z-50 bg-black flex items-center justify-center select-none overflow-hidden font-sans"
     >
-      {/* 1. Embedded Player Mode (Cinejoy / Direct Embed) */}
-      {isEmbedMode ? (
-        <div className="relative w-full h-full flex items-center justify-center bg-black overflow-hidden">
-          <iframe
-            key={`${embedUrl}-${currentSeason}-${currentEpisode}`}
-            src={embedUrl}
-            title={`${title} Stream`}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-            allowFullScreen
-            className="w-full h-full border-0 z-10 bg-black"
-          />
-
-          {/* Floating Sync Controller Toggle Button */}
-          <div className="absolute top-4 right-4 z-40 flex items-center gap-2 pointer-events-auto">
-            <button
-              onClick={() => setShowEmbedControls((prev) => !prev)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-950/90 hover:bg-neutral-900 text-neutral-200 hover:text-white text-xs font-semibold rounded-full border border-neutral-700 shadow-2xl backdrop-blur-md transition-all cursor-pointer"
-              title={showEmbedControls ? 'Hide Bar (Distraction-Free)' : 'Show Bar & Controls'}
-            >
-              {showEmbedControls ? <EyeOff className="w-3.5 h-3.5 text-neutral-300" /> : <Eye className="w-3.5 h-3.5 text-white" />}
-              <span>{showEmbedControls ? 'Hide Controls' : 'Show Controls'}</span>
-            </button>
-          </div>
-
-          {/* Synced Top Navigation & Action Bar in Embed Mode */}
-          <AnimatePresence>
-            {showEmbedControls && (
-              <motion.div
-                initial={{ y: -80, opacity: 0 }}
-                animate={{ y: 0, opacity: 1 }}
-                exit={{ y: -80, opacity: 0 }}
-                transition={{ duration: 0.22, ease: 'easeOut' }}
-                style={{
-                  background:
-                    'linear-gradient(to bottom, rgba(0, 0, 0, 0.95) 0%, rgba(0, 0, 0, 0.75) 40%, rgba(0, 0, 0, 0.2) 80%, rgba(0, 0, 0, 0) 100%)',
-                }}
-                className="absolute top-0 left-0 right-0 z-30 p-4 sm:p-6 flex items-center justify-between pointer-events-auto"
-              >
-                <div className="flex items-center gap-3">
-                  <button
-                    onClick={handleClosePlayer}
-                    className="p-2 text-white hover:text-neutral-300 transition-colors cursor-pointer"
-                    title="Back to Browse"
-                  >
-                    <ArrowLeft className="w-6 h-6 text-white" />
-                  </button>
-                  <div>
-                    <h2 className="text-base sm:text-lg font-bold text-white drop-shadow-md flex items-center gap-2">
-                      <span>{title}</span>
-                      <span className="text-[10px] uppercase font-bold bg-neutral-800 text-neutral-300 border border-neutral-700 px-2 py-0.5 rounded-xs">
-                        Embed
-                      </span>
-                    </h2>
-                    {episodeTitle && (
-                      <p className="text-xs text-neutral-300 font-medium">
-                        {episodeTitle}
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 mr-32 sm:mr-36">
-                  {media.media_type === 'tv' && (
-                    <>
-                      <button
-                        onClick={playPrevEpisode}
-                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-                        title="Previous Episode"
-                      >
-                        <SkipBack className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Prev</span>
-                      </button>
-                      <button
-                        onClick={() => setShowEpisodesDrawer(true)}
-                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1.5"
-                        title="Episodes List"
-                      >
-                        <Tv className="w-3.5 h-3.5" />
-                        <span className="hidden sm:inline">Episodes</span>
-                      </button>
-                      <button
-                        onClick={playNextEpisode}
-                        className="px-2.5 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-                        title="Next Episode"
-                      >
-                        <span className="hidden sm:inline">Next</span>
-                        <SkipForward className="w-3.5 h-3.5" />
-                      </button>
-                    </>
-                  )}
-
-                  <button
-                    onClick={() => setShowSourceSelector(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xs bg-neutral-900/90 hover:bg-neutral-800 border border-neutral-700 text-xs text-neutral-300 hover:text-white transition-colors cursor-pointer"
-                    title="Change Streaming Server"
-                  >
-                    <SlidersHorizontal className="w-3.5 h-3.5 text-neutral-400" />
-                    <span>Server: Cinejoy</span>
-                  </button>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      ) : (
-        <>
-          {/* 2. Custom Video Player (HLS / Native Stream) */}
-          <video
+      {/* Custom Video Player (HLS / Native Stream) */}
+      <video
             ref={videoRef}
             playsInline
             crossOrigin="anonymous"
@@ -1165,8 +1030,6 @@ export default function NetflixPlayer({
               </span>
             </div>
           )}
-        </>
-      )}
 
       {/* Error State Overlay */}
       {streamError && (
@@ -1190,6 +1053,14 @@ export default function NetflixPlayer({
                 <button
                   key={srv.id}
                   onClick={() => {
+                    if (srv.id === 'cinejoy') {
+                      const cinejoyUrl =
+                        media.media_type === 'tv'
+                          ? `https://cinejoy.to/watch/tv/${media.id}/${currentSeason}/${currentEpisode}`
+                          : `https://cinejoy.to/watch/movie/${media.id}`;
+                      window.location.href = cinejoyUrl;
+                      return;
+                    }
                     setSelectedServer(srv.id);
                     loadStreamData(currentSeason, currentEpisode, srv.id);
                   }}
@@ -1791,18 +1662,6 @@ export default function NetflixPlayer({
                         ))}
                       </div>
                     )}
-                    {/* Fullscreen Landscape Toggle */}
-                    <button
-                      onClick={toggleFullscreen}
-                      className="text-white hover:text-neutral-300 transition-colors cursor-pointer p-1"
-                      title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Landscape)'}
-                    >
-                      {isFullscreen ? (
-                        <Minimize className="w-5 h-5 text-white" />
-                      ) : (
-                        <Maximize className="w-5 h-5 text-white" />
-                      )}
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1936,6 +1795,14 @@ export default function NetflixPlayer({
                     <button
                       key={srv.id}
                       onClick={() => {
+                        if (srv.id === 'cinejoy') {
+                          const cinejoyUrl =
+                            media.media_type === 'tv'
+                              ? `https://cinejoy.to/watch/tv/${media.id}/${currentSeason}/${currentEpisode}`
+                              : `https://cinejoy.to/watch/movie/${media.id}`;
+                          window.location.href = cinejoyUrl;
+                          return;
+                        }
                         const currentPos = videoRef.current ? videoRef.current.currentTime : currentTime;
                         if (currentPos > 0) {
                           preservedTimeRef.current = currentPos;
