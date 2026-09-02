@@ -21,6 +21,7 @@ import MyListView from './components/MyListView';
 import CustomStreamModal from './components/CustomStreamModal';
 import PlatformsRow from './components/PlatformsRow';
 import PlatformModal from './components/PlatformModal';
+import NewAndHotReels from './components/NewAndHotReels';
 
 import ContinueWatchingRow, { ContinueWatchingItem } from './components/ContinueWatchingRow';
 
@@ -300,21 +301,23 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-black text-white selection:bg-white selection:text-black antialiased font-sans">
-      {/* 1. Netflix Navigation Bar */}
-      <Navbar
-        activeTab={activeTab}
-        setActiveTab={(tab: any) => {
-          setActiveTab(tab);
-          setIsSearchOpen(false);
-          setSearchQuery('');
-        }}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        isSearchOpen={isSearchOpen}
-        setIsSearchOpen={setIsSearchOpen}
-        onOpenCustomStream={() => setShowCustomStreamModal(true)}
-        myListCount={myList.length}
-      />
+      {/* 1. Netflix Navigation Bar (Hidden when on dedicated full screen Reels mode) */}
+      {activeTab !== 'popular' && (
+        <Navbar
+          activeTab={activeTab}
+          setActiveTab={(tab: any) => {
+            setActiveTab(tab);
+            setIsSearchOpen(false);
+            setSearchQuery('');
+          }}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          isSearchOpen={isSearchOpen}
+          setIsSearchOpen={setIsSearchOpen}
+          onOpenCustomStream={() => setShowCustomStreamModal(true)}
+          myListCount={myList.length}
+        />
+      )}
 
       {/* 2. Main Content Routing (Constrained in max-w-7xl 2xl:max-w-screen-2xl mx-auto w-full to prevent stretching on wide screens) */}
       <div className="w-full max-w-7xl 2xl:max-w-screen-2xl mx-auto">
@@ -340,8 +343,17 @@ export default function App() {
             onOpenDetails={handleOpenDetails}
             onRemoveFromList={removeFromMyList}
           />
+        ) : activeTab === 'popular' ? (
+          /* New & Hot Reel Stream with Auto-playing Trailers */
+          <NewAndHotReels
+            onPlay={handlePlayMedia}
+            onOpenDetails={handleOpenDetails}
+            isInMyList={isInMyList}
+            onToggleMyList={toggleMyList}
+            onBack={() => setActiveTab('home')}
+          />
         ) : (
-          /* Standard Catalog Views (Home, TV Shows, Movies, New & Popular) */
+          /* Standard Catalog Views (Home, TV Shows, Movies) */
           <main className="pb-24">
             {/* Billboard Hero Banner */}
             <HeroBanner
@@ -353,8 +365,8 @@ export default function App() {
               onToggleMyList={toggleMyList}
             />
 
-            {/* Netflix Media Rows with Colored Posters */}
-            <div className="relative z-20 -mt-12 sm:-mt-24 space-y-2">
+            {/* Netflix Media Rows with Proper Gap Spacing (No collision on wide or mobile) */}
+            <div className="relative z-20 mt-4 sm:mt-6 lg:mt-8 space-y-4 sm:space-y-6">
               {/* Streaming Networks & Platforms Row (Netflix, Disney+, Prime, HBO Max, Apple TV+, etc.) */}
               <PlatformsRow onSelectPlatform={(platform) => setSelectedPlatform(platform)} />
 
@@ -496,8 +508,8 @@ export default function App() {
         </div>
       </footer>
 
-      {/* 7. Floating Bottom Navigation Bar for Mobile & Tablet Portrait Screens */}
-      {!activePlayerMedia && (
+      {/* 7. Floating Bottom Navigation Bar for Mobile & Tablet Portrait Screens (Hidden in Reels Mode) */}
+      {!activePlayerMedia && activeTab !== 'popular' && (
         <FloatingBottomNav
           activeTab={activeTab}
           setActiveTab={(tab: any) => {

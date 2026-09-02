@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Play, Info, Plus, Check, Volume2, VolumeX, Sparkles } from 'lucide-react';
 import { TMDBMedia } from '../types';
-import { getBackdropUrl } from '../api/tmdb';
+import { getBackdropUrl, getMediaVideos } from '../api/tmdb';
 import ImageWithSkeleton from './ImageWithSkeleton';
 
 interface HeroBannerProps {
@@ -25,11 +25,18 @@ export default function HeroBanner({
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true);
   const [isHovered, setIsHovered] = useState(false);
+  const [trailersMap, setTrailersMap] = useState<Record<number, string>>({});
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   // Combine media or mediaList into an active pool (max 8 items for hero carousel)
   const activeItems = mediaList.length > 0 ? mediaList.slice(0, 8) : media ? [media] : [];
 
-  // Preload backdrop images for butter-smooth, lag-free transitions
+  const handleNextSlide = useCallback(() => {
+    if (activeItems.length <= 1) return;
+    setCurrentIndex((prev) => (prev + 1) % activeItems.length);
+  }, [activeItems.length]);
+
+  // Preload backdrop images and fetch official trailers for hero items
   useEffect(() => {
     if (activeItems.length === 0) return;
     activeItems.forEach((item) => {
@@ -38,26 +45,73 @@ export default function HeroBanner({
         const img = new Image();
         img.src = url;
       }
+      
+      const type = item.media_type || (item.first_air_date ? 'tv' : 'movie');
+      if (item.id && trailersMap[item.id] === undefined) {
+        getMediaVideos(type, item.id).then((videos) => {
+          const trailer =
+            videos.find((v) => v.site === 'YouTube' && v.type === 'Trailer') ||
+            videos.find((v) => v.site === 'YouTube' && v.type === 'Teaser') ||
+            videos.find((v) => v.site === 'YouTube');
+          setTrailersMap((prev) => ({
+            ...prev,
+            [item.id]: trailer?.key || '',
+          }));
+        }).catch(() => {});
+      }
     });
   }, [activeItems]);
 
-  // Cycle every 7 seconds (7000ms) with smooth cross-fade transition
-  // Pauses automatically when user hovers over the banner to read details
+  const currentMedia = activeItems[currentIndex] || activeItems[0] || null;
+  const trailerKey = currentMedia ? trailersMap[currentMedia.id] : null;
+
+  // 1. YouTube IFrame postMessage Listener: Detect when the trailer video FINISHES (State 0 / ENDED)
+  useEffect(() => {
+    const handleWindowMessage = (event: MessageEvent) => {
+      try {
+        let data = event.data;
+        if (typeof data === 'string') {
+          data = JSON.parse(data);
+        }
+        if (!data) return;
+
+        // YouTube Player State 0 is ENDED (video finished)
+        if (
+          (data.event === 'onStateChange' && data.info === 0) ||
+          (data.event === 'infoDelivery' && data.info && data.info.playerState === 0) ||
+          data.info === 0
+        ) {
+          if (!isHovered) {
+            handleNextSlide();
+          }
+        }
+      } catch {
+        // Ignore non-JSON postMessages
+      }
+    };
+
+    window.addEventListener('message', handleWindowMessage);
+    return () => window.removeEventListener('message', handleWindowMessage);
+  }, [handleNextSlide, isHovered]);
+
+  // 2. Automated Fallback Progression:
+  // - If NO trailer exists for this title: cycle after 10 seconds.
+  // - If trailer DOES exist: set a generous fallback safety timer (e.g., 90s) in case postMessage is blocked,
+  //   while waiting for the actual trailer video to end.
   useEffect(() => {
     if (activeItems.length <= 1 || isHovered) return;
 
-    const timer = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % activeItems.length);
-    }, 7000);
+    const delayMs = trailerKey ? 90000 : 10000;
+    const timer = setTimeout(() => {
+      handleNextSlide();
+    }, delayMs);
 
-    return () => clearInterval(timer);
-  }, [activeItems.length, isHovered]);
-
-  const currentMedia = activeItems[currentIndex] || activeItems[0] || null;
+    return () => clearTimeout(timer);
+  }, [activeItems.length, currentIndex, isHovered, trailerKey, handleNextSlide]);
 
   if (!currentMedia) {
     return (
-      <div className="relative h-[65vh] sm:h-[80vh] w-full bg-neutral-950 flex items-center justify-center">
+      <div className="relative h-[60vh] sm:h-[80vh] w-full bg-neutral-950 flex items-center justify-center">
         <div className="w-full h-full bg-gradient-to-r from-neutral-950 via-neutral-900 to-neutral-950 animate-pulse flex items-center justify-center">
           <div className="text-neutral-600 text-sm font-mono tracking-wider">Loading Featured Cinema...</div>
         </div>
@@ -75,10 +129,10 @@ export default function HeroBanner({
     <div
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
-      className="relative h-[70vh] sm:h-[82vh] lg:h-[88vh] w-full select-none overflow-hidden bg-black"
+      className="relative h-[65vh] sm:h-[82vh] lg:h-[88vh] w-full select-none overflow-hidden bg-black"
     >
       {/* Background Media Backdrop with Silky Smooth Cross-Fade */}
-      <div className="absolute inset-0 bg-black">
+      <div className="absolute inset-0 bg-black overflow-hidden">
         <AnimatePresence initial={false}>
           <motion.div
             key={currentMedia.id}
@@ -88,13 +142,25 @@ export default function HeroBanner({
             transition={{ duration: 0.7, ease: 'easeInOut' }}
             className="absolute inset-0 z-0"
           >
-            <img
-              src={backdropUrl}
-              alt={title}
-              loading="eager"
-              decoding="async"
-              className="w-full h-full object-cover object-center transform scale-105"
-            />
+            {trailerKey ? (
+              <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
+                <iframe
+                  ref={iframeRef}
+                  src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${isMuted ? 1 : 0}&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(typeof window !== 'undefined' ? window.location.origin : '')}`}
+                  title={`${title} Trailer`}
+                  allow="autoplay; encrypted-media"
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[180vw] h-[105vw] min-w-[200vh] min-h-[115vh] object-cover pointer-events-none scale-110"
+                />
+              </div>
+            ) : (
+              <img
+                src={backdropUrl}
+                alt={title}
+                loading="eager"
+                decoding="async"
+                className="w-full h-full object-cover object-center transform scale-105"
+              />
+            )}
             {/* Seamless Black Gradients */}
             <div
               style={{
@@ -113,9 +179,9 @@ export default function HeroBanner({
             <div
               style={{
                 background:
-                  'linear-gradient(to bottom, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.6) 40%, rgba(0,0,0,0) 100%)',
+                  'linear-gradient(to bottom, rgba(0,0,0,0.85) 0%, rgba(0,0,0,0.4) 40%, rgba(0,0,0,0) 100%)',
               }}
-              className="absolute top-0 left-0 right-0 h-36 pointer-events-none z-10"
+              className="absolute top-0 left-0 right-0 h-20 sm:h-32 pointer-events-none z-10"
             ></div>
           </motion.div>
         </AnimatePresence>
@@ -129,7 +195,7 @@ export default function HeroBanner({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.5, ease: 'easeInOut' }}
-          className="absolute inset-0 z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex flex-col justify-end pb-10 sm:pb-20 pointer-events-none"
+          className="absolute inset-0 z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-full flex flex-col justify-end pb-12 sm:pb-20 pointer-events-none"
         >
           <div className="max-w-2xl space-y-2.5 sm:space-y-4 pointer-events-auto">
             {/* Metadata Badges */}

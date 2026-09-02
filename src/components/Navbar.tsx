@@ -47,7 +47,7 @@ export default function Navbar({
     { id: 'home', label: 'Home' },
     { id: 'tv', label: 'TV Shows' },
     { id: 'movies', label: 'Movies' },
-    { id: 'popular', label: 'New & Popular' },
+    { id: 'popular', label: 'New & Hot' },
     { id: 'mylist', label: `My List ${myListCount > 0 ? `(${myListCount})` : ''}` },
   ];
 
