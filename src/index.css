@@ -1,1 +1,39 @@
 @import "tailwindcss";
+
+@keyframes liquidFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes liquidBlob {
+  0%, 100% {
+    transform: translate(0, 0) scale(1) rotate(0deg);
+  }
+  33% {
+    transform: translate(30px, -25px) scale(1.1) rotate(120deg);
+  }
+  66% {
+    transform: translate(-20px, 20px) scale(0.9) rotate(240deg);
+  }
+}
+
+.animate-liquid-flow {
+  background-size: 250% 250%;
+  animation: liquidFlow 12s ease-in-out infinite;
+}
+
+.animate-liquid-blob-1 {
+  animation: liquidBlob 14s ease-in-out infinite;
+}
+
+.animate-liquid-blob-2 {
+  animation: liquidBlob 18s ease-in-out infinite reverse;
+}
+

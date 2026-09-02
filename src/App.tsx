@@ -23,6 +23,7 @@ import PlatformsRow from './components/PlatformsRow';
 import PlatformModal from './components/PlatformModal';
 import NewAndHotReels from './components/NewAndHotReels';
 import BrowseView from './components/BrowseView';
+import InstallAppCard from './components/InstallAppCard';
 import { OfflineBanner } from './components/PWAInstallButton';
 import { useOnlineStatus } from './hooks/usePWAInstall';
 
@@ -329,6 +330,9 @@ export default function App() {
                   onRemoveItem={removeFromContinueWatching}
                 />
               )}
+
+              {/* Install App Card with Liquid Gradient Background above Top 10 Slide */}
+              {activeTab === 'home' && <InstallAppCard />}
 
               {/* Catalog Categories */}
               {isLoading ? (

@@ -20,6 +20,8 @@ import {
   Sparkles,
   Settings,
   X,
+  Maximize,
+  Minimize,
 } from 'lucide-react';
 import { TMDBMedia, MediaStreamData, SeasonDetails, Episode } from '../types';
 import { getMovieStream, getSeriesStream, getSeasonDetails, STREAM_SERVERS } from '../api/tmdb';
@@ -438,10 +440,40 @@ export default function NetflixPlayer({
     }
   };
 
+  // Helper to lock screen orientation to landscape in fullscreen
+  const lockLandscape = useCallback(async () => {
+    try {
+      const orientation = window.screen?.orientation as any;
+      if (orientation && typeof orientation.lock === 'function') {
+        await orientation.lock('landscape').catch(() => {});
+      } else if (typeof (window.screen as any)?.lockOrientation === 'function') {
+        (window.screen as any).lockOrientation('landscape');
+      }
+    } catch {}
+  }, []);
+
+  // Helper to unlock screen orientation
+  const unlockLandscape = useCallback(() => {
+    try {
+      const orientation = window.screen?.orientation as any;
+      if (orientation && typeof orientation.unlock === 'function') {
+        orientation.unlock();
+      } else if (typeof (window.screen as any)?.unlockOrientation === 'function') {
+        (window.screen as any).unlockOrientation();
+      }
+    } catch {}
+  }, []);
+
   // Fullscreen change listener and auto-enter fullscreen on player launch
   useEffect(() => {
     const handleFullscreenChange = () => {
-      setIsFullscreen(Boolean(document.fullscreenElement));
+      const inFullscreen = Boolean(document.fullscreenElement || (document as any).webkitFullscreenElement);
+      setIsFullscreen(inFullscreen);
+      if (inFullscreen) {
+        lockLandscape();
+      } else {
+        unlockLandscape();
+      }
     };
 
     document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -450,7 +482,9 @@ export default function NetflixPlayer({
     // Auto-enter fullscreen mode immediately when player mounts
     const enterFullscreen = () => {
       if (containerRef.current && !document.fullscreenElement) {
-        containerRef.current.requestFullscreen?.().catch(() => {});
+        containerRef.current.requestFullscreen?.().then(() => {
+          lockLandscape();
+        }).catch(() => {});
       }
     };
 
@@ -467,14 +501,16 @@ export default function NetflixPlayer({
     window.addEventListener('touchstart', handleFirstActivation, { once: true });
 
     return () => {
+      unlockLandscape();
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       window.removeEventListener('click', handleFirstActivation);
       window.removeEventListener('touchstart', handleFirstActivation);
     };
-  }, []);
+  }, [lockLandscape, unlockLandscape]);
 
   const handleClosePlayer = () => {
+    unlockLandscape();
     if (document.fullscreenElement) {
       document.exitFullscreen?.().catch(() => {});
     }
@@ -485,11 +521,15 @@ export default function NetflixPlayer({
     if (!containerRef.current) return;
     if (!document.fullscreenElement) {
       if (containerRef.current.requestFullscreen) {
-        containerRef.current.requestFullscreen().catch((err) => console.warn(err));
+        containerRef.current.requestFullscreen().then(() => {
+          lockLandscape();
+        }).catch((err) => console.warn(err));
       }
     } else {
       if (document.exitFullscreen) {
-        document.exitFullscreen().catch((err) => console.warn(err));
+        document.exitFullscreen().then(() => {
+          unlockLandscape();
+        }).catch((err) => console.warn(err));
       }
     }
   };
@@ -1606,6 +1646,18 @@ export default function NetflixPlayer({
                         ))}
                       </div>
                     )}
+                    {/* Fullscreen Landscape Toggle */}
+                    <button
+                      onClick={toggleFullscreen}
+                      className="text-white hover:text-neutral-300 transition-colors cursor-pointer p-1"
+                      title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen (Landscape)'}
+                    >
+                      {isFullscreen ? (
+                        <Minimize className="w-5 h-5 text-white" />
+                      ) : (
+                        <Maximize className="w-5 h-5 text-white" />
+                      )}
+                    </button>
                   </div>
                 </div>
               </div>

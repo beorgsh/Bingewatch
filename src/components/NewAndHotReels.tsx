@@ -4,8 +4,6 @@ import {
   Plus,
   Check,
   Info,
-  Volume2,
-  VolumeX,
   ChevronUp,
   ChevronDown,
   Sparkles,
@@ -14,9 +12,9 @@ import {
   ThumbsUp,
   Share2,
   ArrowLeft,
-  Film,
   Shuffle,
-  Trophy,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { TMDBMedia, VideoResult } from '../types';
 import {
@@ -51,6 +49,8 @@ export default function NewAndHotReels({
   const [items, setItems] = useState<TMDBMedia[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+
+  // Audio State: managed via YouTube JS API postMessage to avoid restarting iframe
   const [isMuted, setIsMuted] = useState(true);
   const [muteToastVisible, setMuteToastVisible] = useState(false);
   const muteToastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -68,20 +68,58 @@ export default function NewAndHotReels({
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
 
-  // Trigger mute toggle with visual icon feedback
-  const triggerMuteToggle = useCallback(() => {
-    setIsMuted((prev) => {
-      const nextState = !prev;
+  // Function to send YouTube API commands to active trailer iframe
+  const sendIframeCommand = useCallback((command: string, args: any[] = []) => {
+    const activeIframe = document.querySelector(
+      `#reel-item-${activeIndex} iframe`
+    ) as HTMLIFrameElement | null;
+
+    if (activeIframe && activeIframe.contentWindow) {
+      activeIframe.contentWindow.postMessage(
+        JSON.stringify({
+          event: 'command',
+          func: command,
+          args: args,
+        }),
+        '*'
+      );
+    }
+  }, [activeIndex]);
+
+  // Seamless mute toggle handler: does NOT modify iframe src, preventing video restart
+  const toggleMute = useCallback(() => {
+    setIsMuted((prevMuted) => {
+      const newMuted = !prevMuted;
+      
+      if (newMuted) {
+        sendIframeCommand('mute');
+      } else {
+        sendIframeCommand('unMute');
+        sendIframeCommand('setVolume', [100]);
+      }
+
       setMuteToastVisible(true);
       if (muteToastTimeoutRef.current) {
         clearTimeout(muteToastTimeoutRef.current);
       }
       muteToastTimeoutRef.current = setTimeout(() => {
         setMuteToastVisible(false);
-      }, 900);
-      return nextState;
+      }, 1000);
+
+      return newMuted;
     });
-  }, []);
+  }, [sendIframeCommand]);
+
+  // If user unmuted, automatically unmute newly active reel trailer once loaded
+  useEffect(() => {
+    if (!isMuted) {
+      const timer = setTimeout(() => {
+        sendIframeCommand('unMute');
+        sendIframeCommand('setVolume', [100]);
+      }, 700);
+      return () => clearTimeout(timer);
+    }
+  }, [activeIndex, isMuted, sendIframeCommand]);
 
   // 1. History popstate interceptor: Intercept device back button / back swipe
   useEffect(() => {
@@ -250,7 +288,7 @@ export default function NewAndHotReels({
     return () => window.removeEventListener('message', handleWindowMessage);
   }, [handleNext]);
 
-  // 7. Keyboard navigation (Up/Down/Left/Escape, J/K, M for mute)
+  // 7. Keyboard navigation (Up/Down/Left/Escape, J/K, M for mute toggle)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown' || e.key === 'j') {
@@ -262,15 +300,15 @@ export default function NewAndHotReels({
       } else if (e.key === 'Escape' || e.key === 'ArrowLeft') {
         if (onBack) onBack();
       } else if (e.key === 'm' || e.key === 'M') {
-        triggerMuteToggle();
+        toggleMute();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleNext, handlePrev, onBack, triggerMuteToggle]);
+  }, [handleNext, handlePrev, onBack, toggleMute]);
 
-  // 8. Horizontal Swipe gesture handlers to close Reels screen (Swipe Right to dismiss) + Tap to Mute
+  // 8. Horizontal Swipe gesture handlers to close Reels screen (Swipe Right to dismiss) + Tap for Mute/Unmute
   const handleTouchStart = (e: React.TouchEvent) => {
     if (e.touches.length === 1) {
       touchStartRef.current = {
@@ -301,8 +339,8 @@ export default function NewAndHotReels({
     const deltaY = touchEnd.clientY - touchStartRef.current.y;
     const deltaTime = Date.now() - touchStartRef.current.time;
 
-    // Detect if this was a stationary tap on screen (< 10px movement and < 300ms)
-    const isStationaryTap = Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12 && deltaTime < 300;
+    // Detect if this was a stationary tap (< 12px move and < 300ms)
+    const isTap = Math.abs(deltaX) < 12 && Math.abs(deltaY) < 12 && deltaTime < 300;
 
     // Trigger close if swiped right more than 80px or quick flick to the right
     const isQuickSwipeRight = deltaX > 60 && deltaTime < 300 && Math.abs(deltaX) > Math.abs(deltaY);
@@ -310,17 +348,14 @@ export default function NewAndHotReels({
 
     if ((isQuickSwipeRight || isLongSwipeRight) && onBack) {
       onBack();
-    } else if (isStationaryTap) {
-      // Check if tap was on background or general surface (not an interactive button)
+    } else if (isTap) {
       const target = e.target as HTMLElement;
       const isInteractive = target.closest('button') || target.closest('a') || target.closest('input');
       if (!isInteractive) {
-        triggerMuteToggle();
+        toggleMute();
       }
-      setSwipeOffsetX(0);
-    } else {
-      setSwipeOffsetX(0);
     }
+    setSwipeOffsetX(0);
     touchStartRef.current = null;
   };
 
@@ -377,104 +412,117 @@ export default function NewAndHotReels({
         transform: swipeOffsetX > 0 ? `translateX(${swipeOffsetX}px)` : 'none',
       }}
     >
-      {/* 1. Fixed Top Header Overlay: Category Pills & Back & Mute Controls */}
+      {/* 1. Fixed Top Header Overlay with Edge Vanishing Fade Effect */}
       <div className="absolute top-0 left-0 right-0 z-40 px-3 sm:px-6 pt-3 sm:pt-4 pb-12 bg-gradient-to-b from-black/90 via-black/50 to-transparent pointer-events-none flex items-center justify-between">
-        <div className="flex items-center gap-2 pointer-events-auto">
+        <div className="flex items-center gap-2 pointer-events-auto flex-1 min-w-0">
           {onBack && (
             <button
               onClick={onBack}
-              className="p-2 rounded-full bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white transition-colors cursor-pointer"
+              className="p-2 rounded-full text-neutral-300 hover:text-white transition-colors cursor-pointer shrink-0"
               title="Back to Home (Swipe right or Esc)"
             >
               <ArrowLeft className="w-5 h-5 text-white" />
             </button>
           )}
 
-          {/* Slidable Category Switcher Bar */}
-          <div
-            ref={categoryScrollRef}
-            className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 px-1 max-w-[68vw] sm:max-w-md snap-x touch-pan-x"
-          >
-            <button
-              onClick={() => setActiveCategory('hot')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
-                activeCategory === 'hot'
-                  ? 'bg-white text-black font-bold shadow-lg scale-105'
-                  : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
-              }`}
-            >
-              <Flame className="w-3.5 h-3.5 text-red-500" />
-              <span>Hot</span>
-            </button>
+          {/* Slidable Category Switcher with Vanishing Gradient Edge Fade Masks */}
+          <div className="relative flex-1 min-w-0 max-w-[72vw] sm:max-w-md">
+            {/* Left Fade Edge */}
+            <div className="absolute left-0 top-0 bottom-0 w-5 bg-gradient-to-r from-black/90 to-transparent pointer-events-none z-10" />
 
-            <button
-              onClick={() => setActiveCategory('coming')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
-                activeCategory === 'coming'
-                  ? 'bg-white text-black font-bold shadow-lg scale-105'
-                  : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
-              }`}
-            >
-              <Calendar className="w-3.5 h-3.5 text-sky-400" />
-              <span>Coming</span>
-            </button>
-
-            <button
-              onClick={() => setActiveCategory('top')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
-                activeCategory === 'top'
-                  ? 'bg-white text-black font-bold shadow-lg scale-105'
-                  : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
-              }`}
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Top</span>
-            </button>
-
-            <button
-              onClick={() => {
-                if (activeCategory === 'reels') {
-                  // If already in reels, refresh with a new random batch
-                  setIsLoading(true);
-                  getRandomMovies().then((results) => {
-                    setItems(results.filter((item) => item.backdrop_path || item.poster_path));
-                    setActiveIndex(0);
-                    if (containerRef.current) containerRef.current.scrollTop = 0;
-                    setIsLoading(false);
-                  });
-                } else {
-                  setActiveCategory('reels');
-                }
+            {/* Scrollable Container with CSS Mask for Smooth Edge Vanishing */}
+            <div
+              ref={categoryScrollRef}
+              className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-none py-1 px-3 snap-x touch-pan-x"
+              style={{
+                maskImage: 'linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent)',
+                WebkitMaskImage: 'linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent)',
               }}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
-                activeCategory === 'reels'
-                  ? 'bg-white text-black font-bold shadow-lg scale-105'
-                  : 'bg-black/60 backdrop-blur-md text-neutral-300 hover:text-white hover:bg-neutral-900/80'
-              }`}
-              title="Random movies across TMDB"
             >
-              <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Reels</span>
-            </button>
+              <button
+                onClick={() => setActiveCategory('hot')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                  activeCategory === 'hot'
+                    ? 'bg-white text-black font-bold shadow-lg scale-105'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Flame className="w-3.5 h-3.5 text-red-500" />
+                <span>Hot</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCategory('coming')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                  activeCategory === 'coming'
+                    ? 'bg-white text-black font-bold shadow-lg scale-105'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5 text-sky-400" />
+                <span>Coming</span>
+              </button>
+
+              <button
+                onClick={() => setActiveCategory('top')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                  activeCategory === 'top'
+                    ? 'bg-white text-black font-bold shadow-lg scale-105'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Top</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  if (activeCategory === 'reels') {
+                    // If already in reels, refresh with a new random batch
+                    setIsLoading(true);
+                    getRandomMovies().then((results) => {
+                      setItems(results.filter((item) => item.backdrop_path || item.poster_path));
+                      setActiveIndex(0);
+                      if (containerRef.current) containerRef.current.scrollTop = 0;
+                      setIsLoading(false);
+                    });
+                  } else {
+                    setActiveCategory('reels');
+                  }
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer whitespace-nowrap snap-start shrink-0 ${
+                  activeCategory === 'reels'
+                    ? 'bg-white text-black font-bold shadow-lg scale-105'
+                    : 'text-neutral-300 hover:text-white'
+                }`}
+                title="Random movies across TMDB"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Reels</span>
+              </button>
+            </div>
+
+            {/* Right Fade Edge */}
+            <div className="absolute right-0 top-0 bottom-0 w-5 bg-gradient-to-l from-black/90 to-transparent pointer-events-none z-10" />
           </div>
         </div>
 
-        {/* Mute/Unmute Quick Toggle Button in Header */}
-        <div className="pointer-events-auto flex items-center gap-2">
+        {/* Quick Mute / Unmute Button in Top Right */}
+        <div className="pointer-events-auto flex items-center shrink-0 ml-2">
           <button
-            onClick={triggerMuteToggle}
-            className="p-2.5 rounded-full bg-black/60 backdrop-blur-md text-white hover:text-white transition-all cursor-pointer shadow-lg active:scale-95"
-            title={isMuted ? 'Unmute video preview (Tap or press M)' : 'Mute video preview (Tap or press M)'}
+            onClick={toggleMute}
+            className="p-2.5 rounded-full text-white hover:text-neutral-200 transition-all cursor-pointer shadow-lg active:scale-95"
+            title={isMuted ? 'Unmute video (Tap screen or press M)' : 'Mute video (Tap screen or press M)'}
           >
-            {isMuted ? <VolumeX className="w-4 h-4 text-white" /> : <Volume2 className="w-4 h-4 text-white" />}
+            {isMuted ? <VolumeX className="w-5 h-5 text-white" /> : <Volume2 className="w-5 h-5 text-white" />}
           </button>
         </div>
       </div>
 
-      {/* 2. Tap-to-Mute Central Animated Feedback Toast */}
+      {/* 2. Visual Audio Toggle Toast Feedback */}
       {muteToastVisible && (
         <div className="fixed inset-0 z-40 pointer-events-none flex items-center justify-center">
-          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-2xl bg-black/75 backdrop-blur-md border border-neutral-700 text-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+          <div className="flex flex-col items-center gap-2 px-6 py-4 rounded-2xl bg-black/80 backdrop-blur-md text-white shadow-2xl animate-in fade-in zoom-in-95 duration-150">
             {isMuted ? (
               <VolumeX className="w-10 h-10 text-white" />
             ) : (
@@ -492,11 +540,11 @@ export default function NewAndHotReels({
         ref={containerRef}
         onScroll={handleScroll}
         onClick={(e) => {
-          // On desktop clicks on the main backdrop area
+          // On desktop clicks on background/video canvas
           const target = e.target as HTMLElement;
           const isInteractive = target.closest('button') || target.closest('a') || target.closest('input');
           if (!isInteractive) {
-            triggerMuteToggle();
+            toggleMute();
           }
         }}
         className="w-full max-w-lg md:max-w-xl lg:max-w-2xl h-screen overflow-y-scroll snap-y snap-mandatory scrollbar-none relative bg-black cursor-pointer"
@@ -527,9 +575,7 @@ export default function NewAndHotReels({
                 {isCurrentActive && trailerKey ? (
                   <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
                     <iframe
-                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=${
-                        isMuted ? 1 : 0
-                      }&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(
+                      src={`https://www.youtube.com/embed/${trailerKey}?autoplay=1&mute=1&controls=0&showinfo=0&rel=0&modestbranding=1&disablekb=1&iv_load_policy=3&enablejsapi=1&origin=${encodeURIComponent(
                         typeof window !== 'undefined' ? window.location.origin : ''
                       )}`}
                       title={`${title} Trailer`}
@@ -564,7 +610,7 @@ export default function NewAndHotReels({
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="Like Title"
                 >
-                  <div className="p-3 rounded-full bg-black/60 backdrop-blur-md text-white group-hover:text-amber-400 transition-colors shadow-xl">
+                  <div className="p-3 rounded-full text-white group-hover:text-amber-400 transition-colors shadow-xl">
                     <ThumbsUp className={`w-5 h-5 ${isLiked ? 'text-amber-400 fill-current' : 'text-white'}`} />
                   </div>
                   <span className="text-[10px] font-semibold text-white drop-shadow-md">
@@ -581,7 +627,7 @@ export default function NewAndHotReels({
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title={isSaved ? 'In My List' : 'Add to My List'}
                 >
-                  <div className="p-3 rounded-full bg-black/60 backdrop-blur-md text-white transition-colors shadow-xl">
+                  <div className="p-3 rounded-full text-white transition-colors shadow-xl">
                     {isSaved ? (
                       <Check className="w-5 h-5 text-white" />
                     ) : (
@@ -602,7 +648,7 @@ export default function NewAndHotReels({
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="Share Title"
                 >
-                  <div className="p-3 rounded-full bg-black/60 backdrop-blur-md text-white group-hover:text-sky-400 transition-colors shadow-xl">
+                  <div className="p-3 rounded-full text-white group-hover:text-sky-400 transition-colors shadow-xl">
                     <Share2 className="w-5 h-5 text-white" />
                   </div>
                   <span className="text-[10px] font-semibold text-white drop-shadow-md">Share</span>
@@ -617,7 +663,7 @@ export default function NewAndHotReels({
                   className="flex flex-col items-center gap-1 cursor-pointer transition-transform active:scale-85 group"
                   title="More Details"
                 >
-                  <div className="p-3 rounded-full bg-black/60 backdrop-blur-md text-white group-hover:text-neutral-200 transition-colors shadow-xl">
+                  <div className="p-3 rounded-full text-white group-hover:text-neutral-200 transition-colors shadow-xl">
                     <Info className="w-5 h-5 text-white" />
                   </div>
                   <span className="text-[10px] font-semibold text-white drop-shadow-md">Info</span>
@@ -646,9 +692,9 @@ export default function NewAndHotReels({
                   <span className="flex items-center gap-1 text-white bg-black/70 backdrop-blur-md px-2 py-0.5 rounded-full text-[11px] font-bold">
                     <Flame className="w-3.5 h-3.5 text-red-500 fill-current" />
                     <span>
-                      {activeCategory === 'top10'
+                      {activeCategory === 'top'
                         ? `TOP ${index + 1}`
-                        : activeCategory === 'coming_soon'
+                        : activeCategory === 'coming'
                         ? 'COMING SOON'
                         : 'HOT REEL'}
                     </span>
@@ -725,8 +771,8 @@ export default function NewAndHotReels({
             handlePrev();
           }}
           disabled={activeIndex === 0}
-          className={`p-3 rounded-full bg-black/70 backdrop-blur-md text-white transition-all cursor-pointer shadow-2xl ${
-            activeIndex === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110 hover:bg-neutral-900'
+          className={`p-3 rounded-full text-white transition-all cursor-pointer shadow-2xl ${
+            activeIndex === 0 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110'
           }`}
           title="Previous Reel (Up Arrow)"
         >
@@ -743,8 +789,8 @@ export default function NewAndHotReels({
             handleNext();
           }}
           disabled={activeIndex === items.length - 1}
-          className={`p-3 rounded-full bg-black/70 backdrop-blur-md text-white transition-all cursor-pointer shadow-2xl ${
-            activeIndex === items.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110 hover:bg-neutral-900'
+          className={`p-3 rounded-full text-white transition-all cursor-pointer shadow-2xl ${
+            activeIndex === items.length - 1 ? 'opacity-30 cursor-not-allowed' : 'hover:scale-110'
           }`}
           title="Next Reel (Down Arrow)"
         >
